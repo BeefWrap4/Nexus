@@ -222,7 +222,7 @@ const router = useRouter()
 const workflowId = computed(() => route.params.id as string)
 const isNew = computed(() => workflowId.value === 'new')
 
-const { addEdges, removeNodes, findNode, setNodes, setEdges, fitView } = useVueFlow()
+const { addEdges, removeNodes, findNode, setNodes, setEdges, fitView, getNodes, getEdges } = useVueFlow()
 
 const canvasRef = ref<HTMLElement | null>(null)
 
