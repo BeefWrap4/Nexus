@@ -365,6 +365,18 @@ class WorkflowEngine:
             for exit_id in exit_nodes:
                 new_edges.append(Edge(source=exit_id, target="__end__"))
 
+        # 将所有edge的source作为target节点的隐式依赖
+        # 这样_get_ready_nodes() 可以正确检测依赖关系
+        edge_sources: dict[str, set[str]] = {}
+        for edge in new_edges:
+            if edge.target not in edge_sources:
+                edge_sources[edge.target] = set()
+            edge_sources[edge.target].add(edge.source)
+
+        for node in new_nodes:
+            existing = set(node.depends_on)
+            node.depends_on = list(existing | edge_sources.get(node.id, set()))
+
         return WorkflowDefinition(nodes=new_nodes, edges=new_edges)
 
     def _build_execution_graph(self, workflow_def: WorkflowDefinition) -> dict[str, Node]:

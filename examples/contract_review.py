@@ -126,8 +126,8 @@ async def main():
                     "请审核 AI 生成的合同风险分析报告。"
                     "确认无误后点击通过，或点击拒绝要求重新审查。"
                 ),
-                # 如果 3 分钟内无人响应，自动通过（仅用于演示）
-                "timeout_seconds": 180,
+                # 演示用短超时：10秒无人操作自动通过
+                "timeout_seconds": 10,
                 "auto_on_timeout": True,
             },
         ),

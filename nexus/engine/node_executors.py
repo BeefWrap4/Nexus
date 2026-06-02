@@ -330,11 +330,11 @@ class HITLNodeExecutor(NodeExecutor):
 
     def __init__(
         self,
-        hitl_controller: HITLController,
+        hitl_controller: HITLController = None,
         default_timeout: int = None,
     ):
         self.hitl_controller = hitl_controller
-        self.default_timeout = default_timeout
+        self.default_timeout = default_timeout or 30  # 默认30秒超时
 
     async def execute(
         self,
