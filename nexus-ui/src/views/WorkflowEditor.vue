@@ -1,90 +1,131 @@
 <template>
   <div class="workflow-editor-page">
-    <a-space class="toolbar">
-      <a-button @click="$router.back()">返回</a-button>
-      <a-button type="primary" @click="saveWorkflow">保存</a-button>
-      <a-button @click="loadWorkflow">加载</a-button>
-      <a-button @click="exportJson">导出 JSON</a-button>
-      <a-upload
-        :before-upload="importJson"
-        :show-upload-list="false"
-        accept=".json"
-      >
-        <a-button>导入 JSON</a-button>
-      </a-upload>
-      <a-button type="dashed" @click="testWorkflow">测试执行</a-button>
-    </a-space>
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <a-space>
+        <a-button @click="$router.back()">
+          <ArrowLeftOutlined /> 返回
+        </a-button>
+        <a-divider type="vertical" />
+        <a-button type="primary" @click="saveWorkflow">
+          <SaveOutlined /> 保存
+        </a-button>
+        <a-button @click="loadWorkflow">
+          <ReloadOutlined /> 加载
+        </a-button>
+        <a-button @click="exportJson">
+          <ExportOutlined /> 导出 JSON
+        </a-button>
+        <a-upload
+          :before-upload="importJson"
+          :show-upload-list="false"
+          accept=".json"
+        >
+          <a-button>
+            <ImportOutlined /> 导入 JSON
+          </a-button>
+        </a-upload>
+        <a-divider type="vertical" />
+        <a-button type="dashed" @click="testWorkflow">
+          <PlayCircleOutlined /> 测试运行
+        </a-button>
+        <a-button danger @click="clearCanvas">
+          <ClearOutlined /> 清空画布
+        </a-button>
+      </a-space>
+    </div>
 
+    <!-- 编辑器主体 -->
     <div class="editor-container" @drop="onDrop" @dragover="onDragOver">
+      <!-- 左侧节点面板 -->
       <NodePanel />
 
-      <div class="canvas-area">
+      <!-- 中间画布区域 -->
+      <div class="canvas-area" ref="canvasRef">
         <VueFlow
           v-model="elements"
           :node-types="nodeTypes"
           :default-edge-options="defaultEdgeOptions"
+          :default-viewport="{ x: 0, y: 0, zoom: 1 }"
           fit-view-on-init
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
           @connect="onConnect"
+          @nodes-change="onNodesChange"
+          @edges-change="onEdgesChange"
         >
-          <Background />
+          <Background pattern-color="#e0e0e0" :gap="16" />
           <Controls />
           <MiniMap />
 
           <!-- 自定义节点渲染 -->
-          <template #node-start="{ label }">
-            <div class="custom-node node-start">
+          <template #node-start="{ id, label, selected }">
+            <div class="custom-node node-start" :class="{ selected }">
+              <Handle type="source" :position="Position.Bottom" />
               <PlayCircleOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-agent="{ data, label }">
-            <div class="custom-node node-agent">
+          <template #node-agent="{ id, label, data, selected }">
+            <div class="custom-node node-agent" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" />
               <RobotOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
               <div v-if="data?.agent_id" class="node-badge">A</div>
             </div>
           </template>
 
-          <template #node-tool="{ label }">
-            <div class="custom-node node-tool">
+          <template #node-tool="{ id, label, selected }">
+            <div class="custom-node node-tool" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" />
               <ToolOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-hitl="{ label }">
-            <div class="custom-node node-hitl">
+          <template #node-hitl="{ id, label, selected }">
+            <div class="custom-node node-hitl" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" />
               <PauseCircleOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-condition="{ label }">
-            <div class="custom-node node-condition">
+          <template #node-condition="{ id, label, selected }">
+            <div class="custom-node node-condition" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" id="true" />
+              <Handle type="source" :position="Position.Bottom" id="false" style="left: 70%" />
               <QuestionCircleOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-parallel="{ label }">
-            <div class="custom-node node-parallel">
+          <template #node-parallel="{ id, label, selected }">
+            <div class="custom-node node-parallel" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" />
               <ForkOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-delay="{ label }">
-            <div class="custom-node node-delay">
+          <template #node-delay="{ id, label, selected }">
+            <div class="custom-node node-delay" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
+              <Handle type="source" :position="Position.Bottom" />
               <ClockCircleOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
           </template>
 
-          <template #node-end="{ label }">
-            <div class="custom-node node-end">
+          <template #node-end="{ id, label, selected }">
+            <div class="custom-node node-end" :class="{ selected }">
+              <Handle type="target" :position="Position.Top" />
               <CheckCircleOutlined class="node-icon" />
               <div class="node-label">{{ label }}</div>
             </div>
@@ -92,6 +133,7 @@
         </VueFlow>
       </div>
 
+      <!-- 右侧属性面板 -->
       <NodeProperties
         :node="selectedNode"
         :agents="agents"
@@ -118,22 +160,40 @@
         style="margin-top: 12px"
         @click="copyToClipboard"
       >
-        复制到剪贴板
+        <CopyOutlined /> 复制到剪贴板
       </a-button>
+    </a-modal>
+
+    <!-- 测试运行弹窗 -->
+    <a-modal
+      v-model:open="testModalOpen"
+      title="测试运行"
+      @ok="confirmTestRun"
+      @cancel="testModalOpen = false"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="输入参数 (JSON)">
+          <a-textarea
+            v-model:value="testInputJson"
+            :rows="6"
+            placeholder='{"key": "value"}'
+          />
+        </a-form-item>
+      </a-form>
     </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { VueFlow, useVueFlow } from '@vue-flow/core'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { VueFlow, useVueFlow, Handle, Position } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import {
   PlayCircleOutlined,
   RobotOutlined,
@@ -143,23 +203,41 @@ import {
   ForkOutlined,
   ClockCircleOutlined,
   CheckCircleOutlined,
+  ArrowLeftOutlined,
+  SaveOutlined,
+  ReloadOutlined,
+  ExportOutlined,
+  ImportOutlined,
+  ClearOutlined,
+  CopyOutlined,
 } from '@ant-design/icons-vue'
 
 import NodePanel from '@/components/NodePanel.vue'
 import NodeProperties from '@/components/NodeProperties.vue'
-import api from '@/api'
+import { workflowApi, agentApi, toolApi } from '@/api'
 import type { WorkflowNode, Agent, Tool } from '@/types'
 
 const route = useRoute()
+const router = useRouter()
 const workflowId = computed(() => route.params.id as string)
+const isNew = computed(() => workflowId.value === 'new')
 
-const { addEdges, removeNodes } = useVueFlow()
+const { addEdges, removeNodes, findNode, setNodes, setEdges, fitView } = useVueFlow()
 
-// 节点与边
+const canvasRef = ref<HTMLElement | null>(null)
+
+// ========== 节点与边 ==========
 const nodes = ref<any[]>([
-  { id: 'start', type: 'start', label: '开始', position: { x: 250, y: 20 }, data: {} },
+  {
+    id: 'start',
+    type: 'start',
+    label: '开始',
+    position: { x: 250, y: 20 },
+    data: {},
+  },
 ])
 const edges = ref<any[]>([])
+
 const elements = computed({
   get: () => [...nodes.value, ...edges.value],
   set: (val: any[]) => {
@@ -171,6 +249,8 @@ const elements = computed({
 const defaultEdgeOptions = {
   animated: true,
   style: { stroke: '#1677ff', strokeWidth: 2 },
+  labelStyle: { fill: '#1677ff', fontSize: 12 },
+  type: 'smoothstep',
 }
 
 const nodeTypes = {
@@ -184,20 +264,23 @@ const nodeTypes = {
   end: 'end',
 }
 
-// 选中节点
+// ========== 选中节点 ==========
 const selectedNode = ref<WorkflowNode | null>(null)
 
-// 数据
+// ========== 数据 ==========
 const agents = ref<Agent[]>([])
 const tools = ref<Tool[]>([])
 
-// 导出弹窗
+// ========== 弹窗状态 ==========
 const exportModalOpen = ref(false)
 const exportedJson = ref('')
+const testModalOpen = ref(false)
+const testInputJson = ref('{}')
 
+// ========== 生命周期 ==========
 onMounted(async () => {
   await fetchAgentsAndTools()
-  if (workflowId.value && workflowId.value !== 'new') {
+  if (!isNew.value) {
     await loadWorkflowFromServer()
   }
 })
@@ -205,28 +288,29 @@ onMounted(async () => {
 async function fetchAgentsAndTools() {
   try {
     const [agentsRes, toolsRes] = await Promise.all([
-      api.get('/agents').catch(() => ({ data: [] })),
-      api.get('/tools').catch(() => ({ data: [] })),
+      agentApi.getList().catch(() => ({ data: [] })),
+      toolApi.getList().catch(() => ({ data: [] })),
     ])
     agents.value = agentsRes.data || []
     tools.value = toolsRes.data || []
-  } catch (err) {
+  } catch {
     // silent fallback
   }
 }
 
 async function loadWorkflowFromServer() {
   try {
-    const { data } = await api.get(`/workflows/${workflowId.value}`)
+    const { data } = await workflowApi.getById(workflowId.value)
     if (data.definition) {
       importDefinition(data.definition)
+      message.success('工作流加载成功')
     }
   } catch (err: any) {
     message.error(`加载工作流失败: ${err?.response?.data?.detail || err.message}`)
   }
 }
 
-// 拖拽放置
+// ========== 拖拽放置 ==========
 function onDragOver(event: DragEvent) {
   event.preventDefault()
   if (event.dataTransfer) {
@@ -241,11 +325,14 @@ function onDrop(event: DragEvent) {
 
   try {
     const nodeInfo = JSON.parse(transferData)
-    const { left, top } = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    const canvasRect = canvasRef.value?.getBoundingClientRect()
+    if (!canvasRect) return
+
     const position = {
-      x: event.clientX - left - 80,
-      y: event.clientY - top - 20,
+      x: event.clientX - canvasRect.left - 80,
+      y: event.clientY - canvasRect.top - 20,
     }
+
     const id = `${nodeInfo.type}-${Date.now()}`
     const newNode = {
       id,
@@ -253,7 +340,7 @@ function onDrop(event: DragEvent) {
       label: nodeInfo.label,
       position,
       data: { type: nodeInfo.type },
-    } as any
+    }
     nodes.value.push(newNode)
     message.success(`已添加 ${nodeInfo.label} 节点`)
   } catch {
@@ -261,16 +348,19 @@ function onDrop(event: DragEvent) {
   }
 }
 
-// 连接
+// ========== 连接 ==========
 function onConnect(params: any) {
-  addEdges(params)
+  addEdges({
+    ...params,
+    id: `e-${params.source}-${params.target}-${Date.now()}`,
+  })
 }
 
-// 节点点击
-function onNodeClick(event: any) {
-  const node = event.node
+// ========== 节点选中/高亮 ==========
+function onNodeClick(_event: any, node: any) {
   const found = nodes.value.find((n: any) => n.id === node.id)
   if (!found) return
+
   selectedNode.value = {
     id: found.id,
     type: found.type as WorkflowNode['type'],
@@ -284,35 +374,84 @@ function onPaneClick() {
   selectedNode.value = null
 }
 
-// 节点更新
+// ========== 节点/边变更监听 ==========
+function onNodesChange(changes: any[]) {
+  for (const change of changes) {
+    if (change.type === 'remove') {
+      edges.value = edges.value.filter(
+        (e: any) => e.source !== change.id && e.target !== change.id
+      )
+      if (selectedNode.value?.id === change.id) {
+        selectedNode.value = null
+      }
+    }
+  }
+}
+
+function onEdgesChange(changes: any[]) {
+  // 可在此处理边的删除等变更
+}
+
+// ========== 节点更新 ==========
 function onNodeUpdate(updated: WorkflowNode) {
   const idx = nodes.value.findIndex((n: any) => n.id === updated.id)
   if (idx === -1) return
-  const existing = nodes.value[idx] as any
+
+  const existing = nodes.value[idx]
   nodes.value[idx] = {
     ...existing,
     label: updated.label,
-    position: updated.position || { x: 0, y: 0 },
+    position: updated.position || existing.position,
     data: {
       ...existing.data,
       config: updated.config,
       agent_id: updated.config?.agent_id,
       tool_id: updated.config?.tool_id,
     },
-  } as any
+  }
+
+  // 同步更新选中节点
+  selectedNode.value = {
+    id: updated.id,
+    type: updated.type,
+    label: updated.label,
+    config: updated.config,
+    position: updated.position || existing.position,
+  }
 }
 
-// 节点删除
+// ========== 节点删除 ==========
 function onNodeDelete(nodeId: string) {
   removeNodes([nodeId])
   nodes.value = nodes.value.filter((n: any) => n.id !== nodeId)
-  edges.value = edges.value.filter((e: any) => e.source !== nodeId && e.target !== nodeId)
+  edges.value = edges.value.filter(
+    (e: any) => e.source !== nodeId && e.target !== nodeId
+  )
   selectedNode.value = null
   message.success('节点已删除')
 }
 
-// 保存 / 加载
-function buildDefinition() {
+// ========== 清空画布 ==========
+function clearCanvas() {
+  Modal.confirm({
+    title: '确认清空画布？',
+    content: '此操作将删除所有节点和连线，且无法撤销。',
+    okText: '确认清空',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => {
+      nodes.value = []
+      edges.value = []
+      selectedNode.value = null
+      setNodes([])
+      setEdges([])
+      message.success('画布已清空')
+    },
+  })
+}
+
+// ========== DAG 序列化/反序列化 ==========
+function buildDefinition(): { nodes: any[]; edges: any[] } {
   return {
     nodes: nodes.value.map((n) => ({
       id: n.id,
@@ -325,51 +464,82 @@ function buildDefinition() {
       id: e.id,
       source: e.source,
       target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
       condition: e.data?.condition,
+      label: e.label,
     })),
   }
 }
 
 function importDefinition(def: any) {
-  if (def.nodes) {
+  if (def.nodes && Array.isArray(def.nodes)) {
     nodes.value = def.nodes.map((n: any) => ({
       id: n.id,
       type: n.type,
       label: n.label,
       position: n.position || { x: 0, y: 0 },
-      data: { config: n.config || {}, agent_id: n.config?.agent_id, tool_id: n.config?.tool_id },
+      data: {
+        config: n.config || {},
+        agent_id: n.config?.agent_id,
+        tool_id: n.config?.tool_id,
+      },
     }))
   }
-  if (def.edges) {
+  if (def.edges && Array.isArray(def.edges)) {
     edges.value = def.edges.map((e: any) => ({
       id: e.id || `e-${e.source}-${e.target}`,
       source: e.source,
       target: e.target,
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
       data: { condition: e.condition },
+      label: e.label,
     }))
   }
+
+  // 同步到 VueFlow
+  nextTick(() => {
+    setNodes([...nodes.value])
+    setEdges([...edges.value])
+    fitView({ padding: 0.2 })
+  })
 }
 
+// ========== 保存 ==========
 async function saveWorkflow() {
   try {
     const definition = buildDefinition()
-    if (workflowId.value && workflowId.value !== 'new') {
-      await api.put(`/workflows/${workflowId.value}`, { definition })
+    const payload = {
+      name: `workflow-${Date.now()}`,
+      description: '',
+      definition,
+    }
+
+    if (!isNew.value) {
+      await workflowApi.update(workflowId.value, payload)
       message.success('工作流已更新')
     } else {
-      await api.post('/workflows', { definition })
+      const { data } = await workflowApi.create(payload)
       message.success('工作流已创建')
+      // 创建成功后跳转到编辑页面
+      if (data.id) {
+        router.replace(`/workflows/${data.id}/edit`)
+      }
     }
+
+    // 同时保存到 localStorage 作为草稿备份
+    localStorage.setItem('nexus_workflow_draft', JSON.stringify(definition))
   } catch (err: any) {
     message.error(`保存失败: ${err?.response?.data?.detail || err.message}`)
   }
 }
 
+// ========== 加载 ==========
 async function loadWorkflow() {
-  if (workflowId.value && workflowId.value !== 'new') {
+  if (!isNew.value) {
     await loadWorkflowFromServer()
   } else {
-    message.info('无服务端工作流可加载，尝试从 localStorage 恢复')
     const saved = localStorage.getItem('nexus_workflow_draft')
     if (saved) {
       try {
@@ -378,16 +548,26 @@ async function loadWorkflow() {
       } catch {
         message.error('恢复草稿失败')
       }
+    } else {
+      message.info('无本地草稿可恢复')
     }
   }
 }
 
+// ========== 导出 JSON ==========
 function exportJson() {
   const definition = buildDefinition()
   exportedJson.value = JSON.stringify(definition, null, 2)
   exportModalOpen.value = true
 }
 
+function copyToClipboard() {
+  navigator.clipboard.writeText(exportedJson.value).then(() => {
+    message.success('已复制到剪贴板')
+  })
+}
+
+// ========== 导入 JSON ==========
 function importJson(file: File) {
   const reader = new FileReader()
   reader.onload = (e) => {
@@ -403,20 +583,28 @@ function importJson(file: File) {
   return false
 }
 
-function copyToClipboard() {
-  navigator.clipboard.writeText(exportedJson.value).then(() => {
-    message.success('已复制')
-  })
+// ========== 测试运行 ==========
+function testWorkflow() {
+  if (isNew.value) {
+    message.warning('请先保存工作流')
+    return
+  }
+  testModalOpen.value = true
 }
 
-async function testWorkflow() {
+async function confirmTestRun() {
   try {
-    if (workflowId.value && workflowId.value !== 'new') {
-      await api.post(`/workflows/${workflowId.value}/runs`, {})
-      message.success('测试执行已触发')
-    } else {
-      message.warning('请先保存工作流')
+    let input = {}
+    try {
+      input = JSON.parse(testInputJson.value || '{}')
+    } catch {
+      message.error('输入参数 JSON 格式错误')
+      return
     }
+
+    await workflowApi.triggerRun(workflowId.value, input)
+    message.success('测试执行已触发')
+    testModalOpen.value = false
   } catch (err: any) {
     message.error(`测试执行失败: ${err?.response?.data?.detail || err.message}`)
   }
@@ -428,21 +616,29 @@ async function testWorkflow() {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 140px);
+  min-height: 500px;
 }
+
 .toolbar {
-  padding: 8px 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid #d9d9d9;
   background: #fff;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
+
 .editor-container {
   display: flex;
   flex: 1;
   overflow: hidden;
 }
+
 .canvas-area {
   flex: 1;
   position: relative;
   height: 100%;
+  min-width: 0;
 }
 
 /* 自定义节点样式 */
@@ -458,13 +654,27 @@ async function testWorkflow() {
   font-size: 13px;
   font-weight: 500;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+  position: relative;
 }
+
+.custom-node:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.custom-node.selected {
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.3), 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
 .node-icon {
   font-size: 18px;
 }
+
 .node-label {
   white-space: nowrap;
 }
+
 .node-badge {
   position: absolute;
   top: -6px;
@@ -488,4 +698,27 @@ async function testWorkflow() {
 .node-parallel { border-color: #13c2c2; color: #13c2c2; }
 .node-delay { border-color: #8c8c8c; color: #8c8c8c; }
 .node-end { border-color: #f5222d; color: #f5222d; }
+
+/* VueFlow 全局样式覆盖 */
+:deep(.vue-flow__node) {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+:deep(.vue-flow__node.selected) {
+  box-shadow: none !important;
+}
+
+:deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+  stroke: #1677ff;
+  stroke-width: 3;
+}
+
+:deep(.vue-flow__handle) {
+  width: 8px;
+  height: 8px;
+  background: #1677ff;
+  border: 2px solid #fff;
+}
 </style>
