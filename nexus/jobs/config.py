@@ -9,9 +9,14 @@
     python -m arq nexus.jobs.config.WorkerSettings
 """
 
+from typing import Any
+
+from arq import cron
 from arq.connections import RedisSettings
 
 from nexus.config import settings
+from nexus.jobs.dlq import record_dead_letter_job
+from nexus.jobs.scheduler import scheduled_workflow_trigger
 from nexus.jobs.workflow import execute_workflow_job
 
 
@@ -23,6 +28,18 @@ class WorkerSettings:
 
     # 注册的任务函数
     functions = [execute_workflow_job]
+
+    # Cron 定时任务（每分钟扫描一次定时工作流）
+    cron_jobs = [
+        cron(
+            scheduled_workflow_trigger,
+            minute={0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+                  15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+                  30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+                  45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59},
+            run_at_startup=False,
+        ),
+    ]
 
     # 并发控制：同时处理的最大任务数
     max_jobs = settings.ARQ_WORKER_CONCURRENCY
@@ -55,6 +72,26 @@ class WorkerSettings:
             max_jobs=self.max_jobs,
             redis=settings.REDIS_URL,
         )
+
+    async def on_job_retry(self, ctx: dict[str, Any]) -> None:
+        """任务重试时钩子.
+
+        当重试次数达到上限时，将任务记录到死信队列。
+        """
+        job = ctx.get("job")
+        if not job:
+            return
+
+        job_try = ctx.get("job_try", 0)
+        if job_try >= self.max_tries:
+            exc = ctx.get("exception")
+            if exc:
+                await record_dead_letter_job(
+                    ctx,
+                    job_id=ctx.get("job_id", ""),
+                    job_try=job_try,
+                    exc=exc,
+                )
 
     async def on_shutdown(self, ctx: dict) -> None:
         """Worker 关闭时清理."""

@@ -116,6 +116,10 @@ class RunService(BaseService[WorkflowRun]):
         }
         run = await self.create(session, run_data, tenant_id)
 
+        # Prometheus 指标：记录触发
+        from nexus.observability.metrics import WORKFLOW_RUNS_TOTAL
+        WORKFLOW_RUNS_TOTAL.labels(status="pending", tenant_id=str(tenant_id)).inc()
+
         # 增加工作流运行计数
         await self.workflow_service.increment_run_count(
             session, workflow_id, tenant_id

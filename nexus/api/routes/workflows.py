@@ -286,3 +286,80 @@ async def clone_workflow(
     )
     await db.commit()
     return {"new_workflow_id": str(new_wf.id), "source": str(workflow_id)}
+
+
+# ---------------------------------------------------------------------------
+# 定时任务调度
+# ---------------------------------------------------------------------------
+
+class ScheduleRequest(BaseModel):
+    """定时任务请求."""
+
+    cron: str = Field(..., min_length=5, max_length=100, description="Cron 表达式，如 '0 9 * * *'")
+
+
+@router.post("/{workflow_id}/schedule")
+async def schedule_workflow(
+    workflow_id: UUID,
+    data: ScheduleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """设置工作流定时任务.
+
+    Cron 表达式格式（标准 5 字段）:
+        分 时 日 月 周
+        0  9  *  *  *   → 每天 9:00
+        */5 * * * *     → 每 5 分钟
+    """
+    from croniter import croniter
+
+    # 验证 Cron 表达式
+    try:
+        croniter(data.cron)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {data.cron}")
+
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    wf = await workflow_service.get(db, workflow_id, tenant_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    wf.schedule_cron = data.cron
+    # 设置定时任务后自动激活工作流
+    if wf.status == "draft":
+        wf.status = "active"
+
+    db.add(wf)
+    await db.commit()
+
+    return {
+        "workflow_id": str(workflow_id),
+        "schedule_cron": data.cron,
+        "status": wf.status,
+        "message": "Workflow scheduled successfully",
+    }
+
+
+@router.delete("/{workflow_id}/schedule")
+async def unschedule_workflow(
+    workflow_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """取消工作流定时任务."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    wf = await workflow_service.get(db, workflow_id, tenant_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    old_cron = wf.schedule_cron
+    wf.schedule_cron = None
+    db.add(wf)
+    await db.commit()
+
+    return {
+        "workflow_id": str(workflow_id),
+        "previous_cron": old_cron,
+        "message": "Workflow unscheduled successfully",
+    }

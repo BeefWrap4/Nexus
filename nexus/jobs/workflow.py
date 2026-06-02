@@ -86,9 +86,9 @@ async def execute_workflow_job(
         if run is None:
             raise ValueError(f"Run {run_id} not found for tenant {tenant_id}")
 
-    # 2. 重建引擎组件（Worker 独立的内存状态）
+    # 2. 重建引擎组件（Worker 独立的内存状态，带 Redis 持久化）
     event_bus = EventBus(redis_client=redis)
-    state_manager = StateManager()
+    state_manager = StateManager(redis_client=redis)
     checkpoint_mgr = CheckpointManager()
     variable_pool = VariablePool()
     router_engine = RouterEngine()
@@ -145,9 +145,18 @@ async def execute_workflow_job(
         }
     )
 
-    # 6. 执行工作流
+    # 6. 执行工作流（带指标记录）
+    from nexus.observability.metrics import (
+        WORKFLOW_RUNS_TOTAL,
+        WORKFLOW_RUN_DURATION,
+        record_node_execution,
+    )
+    from time import perf_counter
+
+    run_start = perf_counter()
     try:
         result = await engine.execute(wf_def, trigger_payload, run_id)
+        run_status = result.status.value
 
         # 7. 广播结束事件
         await event_bus.publish(
@@ -193,6 +202,7 @@ async def execute_workflow_job(
         }
 
     except Exception as exc:
+        run_status = "failed"
         error_info = {
             "type": type(exc).__name__,
             "message": str(exc),
@@ -227,3 +237,8 @@ async def execute_workflow_job(
             )
 
         raise
+    finally:
+        # Prometheus 指标：记录执行耗时和状态
+        run_duration = perf_counter() - run_start
+        WORKFLOW_RUNS_TOTAL.labels(status=run_status, tenant_id=tenant_id).inc()
+        WORKFLOW_RUN_DURATION.labels(status=run_status).observe(run_duration)

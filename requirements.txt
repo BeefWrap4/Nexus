@@ -14,6 +14,7 @@ psycopg2-binary>=2.9.9
 # Cache & Message Queue
 redis>=5.0.0
 arq>=0.26.0
+croniter>=2.0.0  # Cron 表达式解析
 
 # LLM & AI
 litellm>=1.0.0

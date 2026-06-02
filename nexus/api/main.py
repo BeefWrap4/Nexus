@@ -88,6 +88,10 @@ app.add_middleware(
 # RBAC中间件
 app.add_middleware(RBACMiddleware)
 
+# Prometheus 指标中间件
+from nexus.observability.metrics import PrometheusMiddleware, metrics_endpoint
+app.add_middleware(PrometheusMiddleware)
+
 
 # 全局异常处理
 @app.exception_handler(NexusException)
@@ -104,6 +108,13 @@ async def nexus_exception_handler(request: Request, exc: NexusException):
 async def health():
     """健康检查端点."""
     return {"status": "ok", "version": settings.APP_VERSION}
+
+
+# Prometheus 指标端点
+@app.get("/metrics")
+async def metrics():
+    """Prometheus 指标抓取端点."""
+    return await metrics_endpoint()
 
 
 # 导入并注册路由（使用Service层）

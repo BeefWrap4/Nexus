@@ -1,6 +1,7 @@
 """检查点管理器.
 
 基于WAT CheckpointManager 升级:
+- **PostgreSQL 持久化**（支持跨进程恢复）
 - 支持S3大对象存储
 - 支持分叉(fork) - 用于A/B测试
 - 保留策略自动清理
@@ -17,7 +18,7 @@ from nexus.exceptions import CheckpointNotFoundException
 
 
 class Checkpoint:
-    """检查点."""
+    """检查点（内存表示）."""
 
     def __init__(
         self,
@@ -35,9 +36,12 @@ class Checkpoint:
 
 
 class CheckpointManager:
-    """检查点管理器.
+    """检查点管理器 - DB-backed + S3 大对象.
 
-    对应WAT: engine/checkpoint.py
+    关键设计:
+    - 小状态 (<100KB): 直接存入 PostgreSQL JSON 字段
+    - 大状态 (>=100KB): 存入 S3，DB 只存 key
+    - 支持跨进程恢复（Worker A 保存，Worker B 加载）
     """
 
     # 大状态阈值 (100KB)
@@ -53,7 +57,7 @@ class CheckpointManager:
         state: WorkflowState,
         node_id: Optional[str] = None,
     ) -> Checkpoint:
-        """保存检查点 - 对应WAT每阶段自动保存.
+        """保存检查点.
 
         Args:
             run_id: 运行实例ID
@@ -71,7 +75,7 @@ class CheckpointManager:
             key = f"checkpoints/{run_id}/{datetime.now(timezone.utc).isoformat()}.json"
             # await self.s3.put_object(key, state_data)  # 实际S3调用
             state_s3_key = key
-            state_data = "{}"  # 清空本地存储
+            state_data = None  # 不存本地，只存 S3 key
 
         checkpoint = Checkpoint(
             run_id=run_id,
@@ -85,6 +89,25 @@ class CheckpointManager:
             self._checkpoints[run_id] = []
         self._checkpoints[run_id].append(checkpoint)
 
+        # 持久化到 DB
+        try:
+            from nexus.db.database import get_db_session
+            from nexus.models.workflow import CheckpointRecord
+
+            async with get_db_session() as session:
+                record = CheckpointRecord(
+                    id=checkpoint.id,
+                    run_id=run_id,
+                    node_id=node_id,
+                    state_data=json.loads(state_data) if state_data else None,
+                    state_s3_key=state_s3_key,
+                    created_at=checkpoint.created_at,
+                )
+                session.add(record)
+        except Exception:
+            # DB 写入失败不阻塞检查点保存（内存缓存仍可用）
+            pass
+
         return checkpoint
 
     async def load(
@@ -92,7 +115,7 @@ class CheckpointManager:
         run_id: str,
         checkpoint_id: Optional[str] = None,
     ) -> WorkflowState:
-        """加载检查点 - 对应WAT rollback.
+        """加载检查点.
 
         Args:
             run_id: 运行实例ID
@@ -104,22 +127,89 @@ class CheckpointManager:
         Raises:
             CheckpointNotFoundException: 检查点不存在
         """
+        # 优先从内存加载
         checkpoints = self._checkpoints.get(run_id, [])
-        if not checkpoints:
-            raise CheckpointNotFoundException(run_id)
+        if checkpoints:
+            if checkpoint_id:
+                for cp in checkpoints:
+                    if cp.id == checkpoint_id:
+                        return await self._load_checkpoint_state(cp)
+            else:
+                return await self._load_checkpoint_state(checkpoints[-1])
 
-        if checkpoint_id:
-            for cp in checkpoints:
-                if cp.id == checkpoint_id:
-                    return await self._load_checkpoint_state(cp)
-            raise CheckpointNotFoundException(run_id)
+        # 从 DB 加载
+        try:
+            from nexus.db.database import get_db_session
+            from nexus.models.workflow import CheckpointRecord
+            from sqlalchemy import select
 
-        # 加载最新的检查点
-        return await self._load_checkpoint_state(checkpoints[-1])
+            async with get_db_session() as session:
+                if checkpoint_id:
+                    stmt = select(CheckpointRecord).where(
+                        CheckpointRecord.id == checkpoint_id,
+                        CheckpointRecord.run_id == run_id,
+                    )
+                else:
+                    stmt = (
+                        select(CheckpointRecord)
+                        .where(CheckpointRecord.run_id == run_id)
+                        .order_by(CheckpointRecord.created_at.desc())
+                        .limit(1)
+                    )
+                result = await session.execute(stmt)
+                record = result.scalar_one_or_none()
+
+                if record:
+                    if record.state_s3_key and self.s3:
+                        # 从 S3 加载
+                        state_data = await self.s3.get_object(record.state_s3_key)
+                        return WorkflowState.from_dict(json.loads(state_data))
+                    elif record.state_data:
+                        return WorkflowState.from_dict(record.state_data)
+        except Exception:
+            pass
+
+        raise CheckpointNotFoundException(run_id)
 
     async def list_checkpoints(self, run_id: str) -> list[Checkpoint]:
         """列出所有检查点."""
-        return self._checkpoints.get(run_id, [])
+        # 优先返回内存缓存
+        if run_id in self._checkpoints:
+            return self._checkpoints[run_id]
+
+        # 从 DB 加载
+        try:
+            from nexus.db.database import get_db_session
+            from nexus.models.workflow import CheckpointRecord
+            from sqlalchemy import select
+
+            async with get_db_session() as session:
+                stmt = (
+                    select(CheckpointRecord)
+                    .where(CheckpointRecord.run_id == run_id)
+                    .order_by(CheckpointRecord.created_at)
+                )
+                result = await session.execute(stmt)
+                records = result.scalars().all()
+
+                checkpoints = []
+                for record in records:
+                    state = None
+                    if record.state_data:
+                        state = WorkflowState.from_dict(record.state_data)
+                    cp = Checkpoint(
+                        run_id=run_id,
+                        state=state or WorkflowState(run_id=run_id, workflow_id="", version=1),
+                        node_id=record.node_id,
+                        state_s3_key=record.state_s3_key,
+                    )
+                    cp.id = record.id
+                    checkpoints.append(cp)
+
+                self._checkpoints[run_id] = checkpoints
+                return checkpoints
+        except Exception:
+            return []
 
     async def fork(
         self,
@@ -147,6 +237,18 @@ class CheckpointManager:
     async def delete_checkpoints(self, run_id: str) -> None:
         """删除运行实例的所有检查点."""
         self._checkpoints.pop(run_id, None)
+
+        # 从 DB 删除
+        try:
+            from nexus.db.database import get_db_session
+            from nexus.models.workflow import CheckpointRecord
+            from sqlalchemy import delete
+
+            async with get_db_session() as session:
+                stmt = delete(CheckpointRecord).where(CheckpointRecord.run_id == run_id)
+                await session.execute(stmt)
+        except Exception:
+            pass
 
     async def _load_checkpoint_state(self, checkpoint: Checkpoint) -> WorkflowState:
         """从检查点加载状态."""

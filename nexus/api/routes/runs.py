@@ -164,3 +164,63 @@ async def get_run_artifacts(
         }
         for a in artifacts
     ]
+
+
+# ---------------------------------------------------------------------------
+# 死信队列（DLQ）端点
+# ---------------------------------------------------------------------------
+
+@router.get("/dlq")
+async def list_dlq_jobs(
+    status: str = "failed",
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出死信队列中的失败任务."""
+    from nexus.jobs.dlq import list_dead_letter_jobs
+
+    tenant_id = current_user.get("tenant_id")
+    items, total = await list_dead_letter_jobs(
+        tenant_id=tenant_id,
+        status=status,
+        skip=skip,
+        limit=limit,
+    )
+
+    return {
+        "items": [
+            {
+                "id": str(j.id),
+                "run_id": str(j.run_id),
+                "workflow_id": str(j.workflow_id) if j.workflow_id else None,
+                "error_type": j.error_type,
+                "error_message": j.error_message,
+                "retry_count": j.retry_count,
+                "status": j.status,
+                "failed_at": j.failed_at.isoformat() if j.failed_at else None,
+            }
+            for j in items
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+@router.post("/dlq/{job_id}/retry")
+async def retry_dlq_job(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """手动重试死信队列中的任务."""
+    from nexus.jobs.dlq import retry_dead_letter_job
+
+    result = await retry_dead_letter_job(str(job_id))
+
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    return result
