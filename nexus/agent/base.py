@@ -1,0 +1,238 @@
+"""企业级Agent基类.
+
+基于WAT agent/base.py (1255行) 泛化:
+- 保留协作类模式: LLMClient / TrustModel / DecisionParser
+- 保留Fallback链: 主Provider → 备用Provider → 规则兜底
+- 保留全局并发控制: Semaphore
+- 新增: ToolUse / Memory / Delegation / Streaming
+- CrewAI-style Role-Playing: role + goal + backstory
+"""
+
+import asyncio
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+from nexus.agent.decision_parser import AgentDecision, DecisionParser
+from nexus.agent.llm_client import LLMClient
+from nexus.agent.memory import AgentMemory
+from nexus.agent.trust_model import TrustModel
+from nexus.config import settings
+from nexus.exceptions import LLMCallException, MaxIterationsReachedException
+
+
+@dataclass
+class AgentConfig:
+    """Agent配置."""
+
+    name: str
+    role: str = ""  # 角色描述
+    goal: str = ""  # 目标
+    backstory: str = ""  # 背景/个性
+    provider: str = "openai"
+    model: str = "gpt-4o"
+    temperature: float = 0.7
+    max_tokens: int = 4000
+    max_iterations: int = 10
+    system_prompt: str = ""
+    tools: list[str] = field(default_factory=list)
+    memory_enabled: bool = True
+
+
+@dataclass
+class Task:
+    """Agent任务."""
+
+    description: str
+    expected_output: str = ""
+    context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentResult:
+    """Agent执行结果."""
+
+    output: str
+    reasoning: str = ""
+    tool_calls: list[dict] = field(default_factory=list)
+    confidence: float = 0.0
+    status: str = "success"  # success / failed / max_iterations_reached
+
+
+class BaseAgent:
+    """企业级Agent基类.
+
+    基于WAT BaseAgent泛化:
+    - 移除狼人杀专属逻辑（信任模型保留为可选）
+    - 增加ToolUse能力
+    - 增加Memory系统
+    - 支持流式输出
+
+    核心决策流程（对应WAT BaseAgent.decide()）:
+    1. 检索记忆
+    2. 构建System Prompt（含Role-Playing）
+    3. 获取可用工具
+    4. ReAct模式循环（Thought → Action → Observation）
+    5. 返回结果
+    """
+
+    # 全局LLM调用并发控制（复用WAT设计）
+    _LLM_SEMAPHORE = asyncio.Semaphore(10)
+
+    def __init__(
+        self,
+        config: AgentConfig,
+        llm_client: Optional[LLMClient] = None,
+        trust_model: Optional[TrustModel] = None,
+        decision_parser: Optional[DecisionParser] = None,
+        memory: Optional[AgentMemory] = None,
+    ):
+        self.config = config
+        self.llm_client = llm_client or LLMClient()
+        self.trust_model = trust_model
+        self.decision_parser = decision_parser or DecisionParser()
+        self.memory = memory
+
+    async def execute(self, task: Task, context: dict[str, Any] = None) -> AgentResult:
+        """执行Agent任务.
+
+        对应WAT BaseAgent.decide()。
+        """
+        ctx = context or {}
+        tool_calls = []
+        observations = []
+
+        # 1. 检索相关记忆
+        memories = []
+        if self.memory and self.config.memory_enabled:
+            memories = await self.memory.retrieve(task.description, limit=5)
+
+        # 2. 构建System Prompt
+        system_prompt = self._build_system_prompt(memories)
+
+        # 3. ReAct模式循环
+        for iteration in range(self.config.max_iterations):
+            # 构建当前轮次的Prompt
+            prompt = self._build_iteration_prompt(
+                task=task,
+                iteration=iteration,
+                observations=observations,
+            )
+
+            # LLM调用（通过LiteLLM Proxy）
+            try:
+                async with self._LLM_SEMAPHORE:
+                    response = await self.llm_client.call(
+                        system_prompt=system_prompt,
+                        user_prompt=prompt,
+                        model=self.config.model,
+                        provider=self.config.provider,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                    )
+            except Exception as e:
+                raise LLMCallException(str(e), self.config.provider)
+
+            # 解析响应
+            decision = self.decision_parser.parse(response)
+
+            # 处理决策
+            if decision.action == "final_answer":
+                # 最终答案
+                if self.memory and self.config.memory_enabled:
+                    await self.memory.save(
+                        task=task,
+                        result=decision.content,
+                        context=ctx,
+                    )
+                return AgentResult(
+                    output=decision.content,
+                    reasoning=decision.reasoning,
+                    tool_calls=tool_calls,
+                    confidence=decision.confidence or 0.8,
+                )
+
+            elif decision.action == "tool_call":
+                # 执行工具（由外部注入）
+                tool_calls.append({
+                    "tool": decision.tool_name,
+                    "params": decision.tool_params,
+                })
+                observations.append({
+                    "tool": decision.tool_name,
+                    "params": decision.tool_params,
+                    "result": "[Tool execution delegated to ToolRegistry]",
+                })
+
+            elif decision.action == "think":
+                # 纯思考，继续循环
+                observations.append({"thought": decision.content})
+
+            else:
+                # 未知动作，返回结果
+                return AgentResult(
+                    output=decision.content or str(decision),
+                    reasoning=decision.reasoning,
+                    tool_calls=tool_calls,
+                )
+
+        # 达到最大迭代次数
+        raise MaxIterationsReachedException(self.config.name, self.config.max_iterations)
+
+    def _build_system_prompt(self, memories: list[dict] = None) -> str:
+        """构建System Prompt.
+
+        CrewAI-style Role-Playing:
+        - role: 角色描述
+        - goal: 目标
+        - backstory: 背景/个性
+        """
+        parts = []
+
+        # Role-Playing三元组
+        if self.config.role:
+            parts.append(f"You are {self.config.role}.")
+        if self.config.goal:
+            parts.append(f"Your goal is: {self.config.goal}")
+        if self.config.backstory:
+            parts.append(f"Backstory: {self.config.backstory}")
+
+        # 自定义System Prompt
+        if self.config.system_prompt:
+            parts.append(self.config.system_prompt)
+
+        # 记忆注入
+        if memories:
+            parts.append("\nRelevant memories from past tasks:")
+            for mem in memories:
+                parts.append(f"- {mem}")
+
+        # 输出格式指令
+        parts.append(
+            "\nWhen you have a final answer, respond with action 'final_answer'.\n"
+            "When you need to use a tool, respond with action 'tool_call'.\n"
+            "When you need to think, respond with action 'think'."
+        )
+
+        return "\n\n".join(parts)
+
+    def _build_iteration_prompt(
+        self,
+        task: Task,
+        iteration: int,
+        observations: list[dict],
+    ) -> str:
+        """构建迭代Prompt."""
+        parts = [f"Task: {task.description}"]
+
+        if task.expected_output:
+            parts.append(f"Expected output: {task.expected_output}")
+
+        if observations:
+            parts.append("\nPrevious observations:")
+            for i, obs in enumerate(observations, 1):
+                parts.append(f"{i}. {obs}")
+
+        parts.append(f"\nIteration: {iteration + 1}")
+        parts.append("What is your next action?")
+
+        return "\n\n".join(parts)

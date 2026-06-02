@@ -1,0 +1,59 @@
+# LiteLLM Proxy 配置
+# 统一管理所有LLM Provider
+
+model_list:
+  # OpenAI
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Anthropic
+  - model_name: claude-3-sonnet
+    litellm_params:
+      model: anthropic/claude-3-sonnet-20240229
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # DeepSeek
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # DashScope (阿里云)
+  - model_name: qwen-max
+    litellm_params:
+      model: dashscope/qwen-max
+      api_key: os.environ/DASHSCOPE_API_KEY
+
+  # SiliconFlow
+  - model_name: qwen3-8b
+    litellm_params:
+      model: siliconflow/Qwen3-8B
+      api_key: os.environ/SILICONFLOW_API_KEY
+
+  # 本地Ollama
+  - model_name: llama3-local
+    litellm_params:
+      model: ollama/llama3
+      api_base: http://ollama:11434
+
+# 路由策略
+router_settings:
+  routing_strategy: simple-shuffle
+  timeout: 30
+
+# 预算控制
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  proxy_batch_write_at: 60
+
+# 可观测性
+litellm_settings:
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]

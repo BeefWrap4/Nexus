@@ -1,0 +1,150 @@
+"""工具路由."""
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from nexus.db.database import get_db
+from nexus.security.auth import get_current_user
+from nexus.services.tool import ToolService
+
+router = APIRouter()
+
+tool_service = ToolService()
+
+
+class ToolCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str = ""
+    type: str = "http"  # http / sql / python / mcp
+    config: dict = Field(default_factory=dict)
+    schema: dict = Field(default_factory=dict)
+    auth_config: dict = Field(default_factory=dict)
+
+
+class ToolResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    type: str
+    status: str
+    created_at: str
+
+
+def _to_response(tool) -> ToolResponse:
+    return ToolResponse(
+        id=str(tool.id),
+        name=tool.name,
+        description=tool.description or "",
+        type=tool.type,
+        status=tool.status or "active",
+        created_at=tool.created_at.isoformat() if tool.created_at else "",
+    )
+
+
+@router.get("/")
+async def list_tools(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    items, _ = await tool_service.list(db, tenant_id)
+    return [_to_response(t) for t in items]
+
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
+async def create_tool(
+    data: ToolCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """注册工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    tool = await tool_service.create(
+        db,
+        data={
+            "name": data.name,
+            "description": data.description,
+            "type": data.type,
+            "config": data.config,
+            "schema": data.schema,
+            "auth_config": data.auth_config,
+        },
+        tenant_id=tenant_id,
+    )
+    await db.commit()
+    return _to_response(tool)
+
+
+@router.get("/{tool_id}")
+async def get_tool(
+    tool_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    tool = await tool_service.get(db, tool_id, tenant_id)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return _to_response(tool)
+
+
+@router.put("/{tool_id}")
+async def update_tool(
+    tool_id: UUID,
+    data: ToolCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """更新工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    tool = await tool_service.update(
+        db,
+        tool_id,
+        data=data.model_dump(),
+        tenant_id=tenant_id,
+    )
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    await db.commit()
+    return _to_response(tool)
+
+
+@router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tool(
+    tool_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """删除工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    ok = await tool_service.delete(db, tool_id, tenant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    await db.commit()
+    return None
+
+
+@router.post("/{tool_id}/test")
+async def test_tool(
+    tool_id: UUID,
+    params: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """测试工具."""
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    tool = await tool_service.get(db, tool_id, tenant_id)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+    return {
+        "success": True,
+        "tool_name": tool.name,
+        "tool_type": tool.type,
+        "params": params,
+        "result": "Tool test placeholder",
+    }
