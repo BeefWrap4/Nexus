@@ -320,3 +320,31 @@ class ToolRegistry:
             success=True,
             data={"server": server_url, "params": params, "description": "MCP call placeholder"},
         )
+
+
+# ---------------------------------------------------------------------------
+# 全局 ToolRegistry 单例
+# ---------------------------------------------------------------------------
+_global_tool_registry: ToolRegistry | None = None
+
+
+def get_tool_registry() -> ToolRegistry:
+    """获取全局 ToolRegistry 单例.
+
+    首次调用时自动创建并注册 RAG Tools。
+    在 API 进程和 ARQ Worker 进程之间共享 Tool 定义。
+    """
+    global _global_tool_registry
+    if _global_tool_registry is None:
+        _global_tool_registry = ToolRegistry()
+        # 延迟导入避免循环依赖
+        from nexus.tools.rag import register_rag_tools
+
+        register_rag_tools(_global_tool_registry)
+    return _global_tool_registry
+
+
+def set_tool_registry(registry: ToolRegistry) -> None:
+    """设置全局 ToolRegistry（用于测试替换）."""
+    global _global_tool_registry
+    _global_tool_registry = registry

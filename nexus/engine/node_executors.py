@@ -251,10 +251,12 @@ class ToolNodeExecutor(NodeExecutor):
     1. 从ToolRegistry查找工具
     2. 解析并校验输入参数
     3. 执行工具并返回结果
+    4. 支持流式输出（SSE → EventBus → WebSocket）
     """
 
-    def __init__(self, tool_registry: ToolRegistry):
+    def __init__(self, tool_registry: ToolRegistry, event_bus=None):
         self.tool_registry = tool_registry
+        self.event_bus = event_bus
 
     async def execute(
         self,
@@ -274,6 +276,15 @@ class ToolNodeExecutor(NodeExecutor):
                 error={"message": "Tool name not specified in node config"},
             )
 
+        # 查找工具定义
+        tool = self.tool_registry.get_tool(tool_name)
+        if not tool:
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error={"message": f"Tool '{tool_name}' not found"},
+            )
+
         # 构建执行上下文
         context = {
             "run_id": run_id,
@@ -282,6 +293,11 @@ class ToolNodeExecutor(NodeExecutor):
             "user_id": state.env_vars.get("user_id"),
         }
 
+        # 流式执行（SSE → EventBus → WebSocket）
+        if tool.config.get("stream"):
+            return await self._execute_stream(node, tool, inputs, context, run_id)
+
+        # 普通执行
         try:
             result = await self.tool_registry.execute(
                 tool_name=tool_name,
@@ -311,6 +327,108 @@ class ToolNodeExecutor(NodeExecutor):
                 status=NodeStatus.FAILED,
                 error={"message": f"Tool '{tool_name}' not found"},
             )
+        except Exception as e:
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error={"type": type(e).__name__, "message": str(e)},
+            )
+
+    async def _execute_stream(
+        self,
+        node: Node,
+        tool,
+        inputs: dict[str, Any],
+        context: dict[str, Any],
+        run_id: str,
+    ) -> NodeResult:
+        """执行流式工具（SSE）.
+
+        逐 chunk 消费 SSE 响应，通过 EventBus 发布到 WebSocket 客户端。
+        最终返回聚合的完整结果。
+        """
+        import httpx
+
+        config = tool.config
+        url = config.get("url", "")
+        method = config.get("method", "GET").upper()
+        headers = dict(config.get("headers", {}))
+        timeout = config.get("timeout", 30)
+
+        # 注入认证头
+        auth = tool.auth_config
+        if auth:
+            auth_type = auth.get("type", "")
+            if auth_type == "header":
+                headers[auth["key"]] = auth["value"]
+            elif auth_type == "bearer":
+                headers["Authorization"] = f"Bearer {auth.get('token', '')}"
+
+        # URL 模板替换 + 参数过滤（复用 registry 逻辑）
+        import re
+        url_vars = re.findall(r"\{(\w+)\}", url)
+        body_params = dict(inputs)
+        for var in url_vars:
+            if var in body_params:
+                url = url.replace(f"{{{var}}}", str(body_params.pop(var)))
+
+        schema = tool.schema
+        if schema and schema.get("properties"):
+            allowed_keys = set(schema["properties"].keys())
+            body_params = {k: v for k, v in body_params.items() if k in allowed_keys}
+
+        collected_chunks = []
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                request_kwargs = {"headers": headers}
+                if method == "POST":
+                    request_kwargs["json"] = body_params
+                elif method == "GET":
+                    request_kwargs["params"] = body_params
+
+                async with client.stream(method, url, **request_kwargs) as response:
+                    response.raise_for_status()
+
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            chunk = line[6:].strip()
+                            if chunk == "[DONE]":
+                                break
+                            collected_chunks.append(chunk)
+
+                            # 通过 EventBus 推送 chunk（实时传输到前端）
+                            if self.event_bus:
+                                await self.event_bus.publish({
+                                    "type": "stream_chunk",
+                                    "run_id": run_id,
+                                    "node_id": node.id,
+                                    "tool_name": tool.name,
+                                    "chunk": chunk,
+                                    "index": len(collected_chunks) - 1,
+                                })
+
+            full_text = "".join(collected_chunks)
+
+            # 发送流结束标记
+            if self.event_bus:
+                await self.event_bus.publish({
+                    "type": "stream_end",
+                    "run_id": run_id,
+                    "node_id": node.id,
+                    "tool_name": tool.name,
+                    "total_chunks": len(collected_chunks),
+                })
+
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.SUCCEEDED,
+                output={
+                    "data": {"response": full_text, "streamed": True},
+                    "metadata": {"chunks": len(collected_chunks), "tool": tool.name},
+                },
+            )
+
         except Exception as e:
             return NodeResult(
                 node_id=node.id,

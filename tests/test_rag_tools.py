@@ -48,11 +48,11 @@ class TestRAGToolDefinitions:
     """测试 RAG Tool 定义是否正确构建."""
 
     def test_build_rag_tools_count(self):
-        """应生成 4 个 RAG Tools."""
+        """应生成 5 个 RAG Tools（含流式）."""
         tools = build_rag_tools()
-        assert len(tools) == 4
+        assert len(tools) == 5
         names = {t.name for t in tools}
-        assert names == {"rag_ask", "rag_embeddings", "rag_intent_match", "rag_history_recall"}
+        assert names == {"rag_ask", "rag_ask_stream", "rag_embeddings", "rag_intent_match", "rag_history_recall"}
 
     def test_rag_ask_tool_structure(self):
         """rag_ask Tool 结构正确."""

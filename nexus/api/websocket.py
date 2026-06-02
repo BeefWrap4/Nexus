@@ -91,7 +91,7 @@ def subscribe_websocket_to_eventbus(event_bus: EventBus, conn_mgr: ConnectionMan
         run_id = event.get("run_id")
         if not run_id:
             return
-        # 只转发 run 状态相关事件，避免噪音
+        # 转发 run 状态相关事件 + 流式 chunk 事件
         if event.get("type") in (
             "run_started",
             "run_state_update",
@@ -101,6 +101,8 @@ def subscribe_websocket_to_eventbus(event_bus: EventBus, conn_mgr: ConnectionMan
             "hitl_request",
             "hitl_response",
             "hitl_cancelled",
+            "stream_chunk",
+            "stream_end",
         ):
             await conn_mgr.broadcast_to_run(run_id, event)
 

@@ -40,6 +40,54 @@ def build_rag_tools() -> list[Tool]:
 
     return [
         Tool(
+            name="rag_ask_stream",
+            description="使用 Smart Cache 进行流式 LLM 问答。"
+            "逐字返回 LLM 生成的回答，适合长文本生成场景。"
+            "支持语义缓存：命中缓存时直接返回完整结果。",
+            type=ToolType.HTTP,
+            config={
+                "url": f"{base_url}/v1/llm/ask/stream",
+                "method": "POST",
+                "headers": {**common_headers, "Accept": "text/event-stream"},
+                "timeout": timeout,
+                "stream": True,
+            },
+            auth_config=auth_config,
+            schema={
+                "type": "object",
+                "required": ["prompt", "session_id"],
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "用户问题或提示词",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "会话ID，用于缓存隔离和历史关联",
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "系统提示词（覆盖默认）",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "default": 0.2,
+                        "description": "生成温度",
+                    },
+                    "use_history": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "是否注入会话历史",
+                    },
+                    "history_turns": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "注入的历史轮数",
+                    },
+                },
+            },
+        ),
+        Tool(
             name="rag_ask",
             description="使用 Smart Cache 进行带语义缓存的 LLM 问答。"
             "如果问题命中缓存，直接返回缓存结果；否则调用 LLM 生成回答并缓存。"

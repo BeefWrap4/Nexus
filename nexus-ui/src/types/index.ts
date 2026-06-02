@@ -48,6 +48,8 @@ export interface Tool {
   type: string
   status: string
   config?: Record<string, any>
+  schema?: Record<string, any>
+  source?: 'db' | 'registry'
 }
 
 export interface HITLTask {

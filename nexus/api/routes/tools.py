@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,28 +31,57 @@ class ToolResponse(BaseModel):
     type: str
     status: str
     created_at: str
+    schema: dict = Field(default_factory=dict)
+    source: str = "db"  # db / registry
 
 
-def _to_response(tool) -> ToolResponse:
-    return ToolResponse(
-        id=str(tool.id),
-        name=tool.name,
-        description=tool.description or "",
-        type=tool.type,
-        status=tool.status or "active",
-        created_at=tool.created_at.isoformat() if tool.created_at else "",
-    )
+def _to_response(tool) -> dict:
+    return {
+        "id": str(tool.id),
+        "name": tool.name,
+        "description": tool.description or "",
+        "type": tool.type,
+        "status": tool.status or "active",
+        "created_at": tool.created_at.isoformat() if tool.created_at else "",
+        "schema": tool.schema if hasattr(tool, "schema") else {},
+        "source": "db",
+    }
 
 
 @router.get("/")
 async def list_tools(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """列出工具."""
+    """列出工具（合并 DB 工具和内存 RAG Tools）."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    items, _ = await tool_service.list(db, tenant_id)
-    return [_to_response(t) for t in items]
+
+    # 1. DB 中的工具
+    db_items, _ = await tool_service.list(db, tenant_id)
+    results = [_to_response(t) for t in db_items]
+
+    # 2. 内存 ToolRegistry 中的工具（RAG Tools 等）
+    from nexus.tools.registry import get_tool_registry
+
+    registry = get_tool_registry()
+    registry_tools = registry.list_tools(context={"tenant_id": str(tenant_id)})
+
+    for tool_info in registry_tools:
+        tool_def = registry.get_tool(tool_info.name)
+        if tool_def:
+            results.append({
+                "id": tool_info.name,  # 内存工具用 name 作为 ID
+                "name": tool_info.name,
+                "description": tool_info.description,
+                "type": tool_def.type.value,
+                "status": "active",
+                "created_at": "",
+                "schema": tool_info.schema,
+                "source": "registry",
+            })
+
+    return results
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)

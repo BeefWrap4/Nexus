@@ -9,14 +9,20 @@
 
     <a-table :columns="columns" :dataSource="tools" rowKey="id" :loading="loading">
       <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'name'">
+          <a-space>
+            <span>{{ record.name }}</span>
+            <a-tag v-if="record.source === 'registry'" color="purple">RAG</a-tag>
+          </a-space>
+        </template>
         <template v-if="column.key === 'status'">
           <a-badge :status="record.status === 'active' ? 'success' : 'default'" :text="record.status === 'active' ? '启用' : '禁用'" />
         </template>
         <template v-if="column.key === 'action'">
           <a-space>
             <a-button size="small" @click="testTool(record)">测试</a-button>
-            <a-button size="small" @click="openEdit(record)">编辑</a-button>
-            <a-button size="small" danger @click="deleteTool(record.id)">删除</a-button>
+            <a-button v-if="record.source !== 'registry'" size="small" @click="openEdit(record)">编辑</a-button>
+            <a-button v-if="record.source !== 'registry'" size="small" danger @click="deleteTool(record.id)">删除</a-button>
           </a-space>
         </template>
       </template>

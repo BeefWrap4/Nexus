@@ -34,6 +34,8 @@ from nexus.engine.node_executors import (
     EndNodeExecutor,
     AgentNodeExecutor,
     HITLNodeExecutor,
+    ToolNodeExecutor,
+    ConditionNodeExecutor,
 )
 from nexus.engine.hitl_controller import HITLController
 from nexus.engine.enums import RunStatus
@@ -102,10 +104,21 @@ async def execute_workflow_job(
     )
 
     # 3. 注册节点执行器
+    from nexus.tools.registry import get_tool_registry
+
+    tool_registry = get_tool_registry()
     hitl_controller = HITLController(event_bus=event_bus)
     engine.register_executor(NodeType.START, StartNodeExecutor())
     engine.register_executor(NodeType.END, EndNodeExecutor())
     engine.register_executor(NodeType.AGENT, AgentNodeExecutor())
+    engine.register_executor(
+        NodeType.TOOL,
+        ToolNodeExecutor(tool_registry=tool_registry, event_bus=event_bus),
+    )
+    engine.register_executor(
+        NodeType.CONDITION,
+        ConditionNodeExecutor(router_engine=router_engine),
+    )
     engine.register_executor(
         NodeType.HITL,
         HITLNodeExecutor(hitl_controller=hitl_controller, default_timeout=10),

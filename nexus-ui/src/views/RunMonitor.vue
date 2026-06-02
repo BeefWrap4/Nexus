@@ -53,6 +53,15 @@
             <p style="margin: 0; font-size: 12px; color: #666"><strong>输入:</strong></p>
             <pre class="code-block">{{ JSON.stringify(node.input, null, 2) }}</pre>
           </div>
+          <!-- 流式输出展示 -->
+          <div v-if="streamChunks[node.node_id]?.chunks.length">
+            <p style="margin: 0; font-size: 12px; color: #666">
+              <strong>流式输出:</strong>
+              <a-tag v-if="!streamChunks[node.node_id]?.ended" size="small" color="blue">生成中...</a-tag>
+            </p>
+            <div class="stream-output">{{ streamChunks[node.node_id].chunks.join('') }}</div>
+          </div>
+
           <div v-if="node.output">
             <p style="margin: 0; font-size: 12px; color: #666"><strong>输出:</strong></p>
             <pre class="code-block">{{ JSON.stringify(node.output, null, 2).substring(0, 500) }}</pre>
@@ -90,6 +99,9 @@ const nodeRuns = ref<NodeRun[]>([])
 const logs = ref<string[]>([])
 const wsConnected = ref(false)
 const logContainer = ref<HTMLDivElement | null>(null)
+
+// 流式输出存储: { node_id: { chunks: string[], ended: boolean } }
+const streamChunks = ref<Record<string, { chunks: string[]; ended: boolean }>>({})
 
 let ws: WebSocket | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -206,6 +218,20 @@ function connect() {
           }
         } else if (data.type === 'status_update') {
           runStatus.value = data.status
+        } else if (data.type === 'stream_chunk') {
+          const nodeId = data.node_id
+          if (!streamChunks.value[nodeId]) {
+            streamChunks.value[nodeId] = { chunks: [], ended: false }
+          }
+          streamChunks.value[nodeId].chunks.push(data.chunk)
+          // 实时滚动日志
+          logs.value.push(`[STREAM] ${data.tool_name} [${nodeId}]: ${data.chunk}`)
+        } else if (data.type === 'stream_end') {
+          const nodeId = data.node_id
+          if (streamChunks.value[nodeId]) {
+            streamChunks.value[nodeId].ended = true
+          }
+          logs.value.push(`[STREAM] ${data.tool_name} [${nodeId}]: 流式输出完成 (${data.total_chunks} chunks)`)
         } else if (data.type === 'log') {
           logs.value.push(`[${new Date(data.ts || Date.now()).toLocaleTimeString()}] ${data.message}`)
         } else {
@@ -302,5 +328,20 @@ watch(() => runId.value, () => {
 .code-block.error {
   background: #fff2f0;
   color: #ff4d4f;
+}
+.stream-output {
+  background: #f0f5ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 4px;
+  padding: 10px;
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1d39c4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 40px;
+  max-height: 300px;
+  overflow-y: auto;
 }
 </style>

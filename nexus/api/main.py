@@ -56,11 +56,10 @@ async def lifespan(app: FastAPI):
     listener_task = asyncio.create_task(event_bus.start_listener())
 
     # 注册 RAG Tools（Smart Cache 集成）
-    from nexus.tools.rag import register_rag_tools
-    from nexus.tools.registry import ToolRegistry
+    # 使用全局单例，确保 API 进程和 Worker 进程共享同一 ToolRegistry
+    from nexus.tools.registry import get_tool_registry
 
-    tool_registry = ToolRegistry()
-    register_rag_tools(tool_registry)
+    tool_registry = get_tool_registry()
     app.state.tool_registry = tool_registry
 
     yield

@@ -68,28 +68,95 @@
       <template v-if="node.type === 'tool'">
         <a-form-item label="选择工具">
           <a-select
-            v-model:value="localNode.config.tool_id"
+            v-model:value="localNode.config.tool_name"
             placeholder="选择工具"
-            @change="emitUpdate"
+            @change="onToolChange"
           >
             <a-select-option
               v-for="tool in tools"
               :key="tool.id"
-              :value="tool.id"
+              :value="tool.name"
             >
-              {{ tool.name }}
+              <span>{{ tool.name }}</span>
+              <a-tag v-if="tool.source === 'registry'" size="small" color="purple" style="margin-left: 6px">RAG</a-tag>
+              <span v-if="tool.description" style="margin-left: 6px; color: #999; font-size: 12px">
+                {{ tool.description.slice(0, 30) }}
+              </span>
             </a-select-option>
           </a-select>
         </a-form-item>
 
-        <a-form-item label="工具参数 (JSON)">
-          <a-textarea
-            v-model:value="toolParamsJson"
-            :rows="4"
-            placeholder='{"key": "value"}'
-            @blur="updateToolParams"
-          />
-        </a-form-item>
+        <!-- 动态参数表单（基于 JSON Schema） -->
+        <template v-if="selectedToolSchema">
+          <a-divider style="margin: 8px 0">
+            <span style="font-size: 12px; color: #999">参数配置</span>
+          </a-divider>
+
+          <div
+            v-for="(propDef, propName) in selectedToolSchema.properties"
+            :key="propName"
+          >
+            <a-form-item :label="propName">
+              <template #help>
+                <span style="color: #999">{{ propDef.description }}</span>
+              </template>
+
+              <!-- string 类型 -->
+              <a-input
+                v-if="propDef.type === 'string'"
+                v-model:value="toolParamValues[propName]"
+                :placeholder="propDef.default ?? getPlaceholder(propName)"
+                @change="emitToolParamsUpdate"
+              />
+
+              <!-- number 类型 -->
+              <a-input-number
+                v-else-if="propDef.type === 'number'"
+                v-model:value="toolParamValues[propName]"
+                :placeholder="propDef.default"
+                style="width: 100%"
+                @change="emitToolParamsUpdate"
+              />
+
+              <!-- integer 类型 -->
+              <a-input-number
+                v-else-if="propDef.type === 'integer'"
+                v-model:value="toolParamValues[propName]"
+                :placeholder="propDef.default"
+                :precision="0"
+                style="width: 100%"
+                @change="emitToolParamsUpdate"
+              />
+
+              <!-- boolean 类型 -->
+              <a-switch
+                v-else-if="propDef.type === 'boolean'"
+                v-model:checked="toolParamValues[propName]"
+                @change="emitToolParamsUpdate"
+              />
+
+              <!-- 其他类型：JSON 输入 -->
+              <a-input
+                v-else
+                v-model:value="toolParamValues[propName]"
+                :placeholder="getPlaceholder(propName)"
+                @change="emitToolParamsUpdate"
+              />
+            </a-form-item>
+          </div>
+        </template>
+
+        <!-- 无 Schema 时回退到 JSON 文本框 -->
+        <template v-else>
+          <a-form-item label="工具参数 (JSON)">
+            <a-textarea
+              v-model:value="toolParamsJson"
+              :rows="4"
+              placeholder='{"key": "value"} — 支持变量模板 {{#trigger.field#}}'
+              @blur="updateToolParams"
+            />
+          </a-form-item>
+        </template>
       </template>
 
       <template v-if="node.type === 'condition'">
@@ -218,7 +285,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, reactive } from 'vue'
 import {
   EditOutlined,
   InfoCircleOutlined,
@@ -252,6 +319,7 @@ const localNode = ref<WorkflowNode>({
 })
 
 const toolParamsJson = ref('')
+const toolParamValues = reactive<Record<string, any>>({})
 
 const typeLabelMap: Record<string, string> = {
   start: '开始',
@@ -280,20 +348,69 @@ const typeColorMap: Record<string, string> = {
 const typeLabel = computed(() => (props.node ? typeLabelMap[props.node.type] || props.node.type : ''))
 const typeColor = computed(() => (props.node ? typeColorMap[props.node.type] || 'default' : 'default'))
 
+// 当前选中的工具定义
+const selectedTool = computed(() => {
+  const name = localNode.value.config?.tool_name
+  if (!name) return null
+  return props.tools.find((t) => t.name === name) || null
+})
+
+// 当前选中工具的 JSON Schema
+const selectedToolSchema = computed(() => {
+  return selectedTool.value?.schema || null
+})
+
 watch(
   () => props.node,
   (newNode) => {
     if (newNode) {
       localNode.value = JSON.parse(JSON.stringify(newNode))
-      if (newNode.type === 'tool' && newNode.config.params) {
-        toolParamsJson.value = JSON.stringify(newNode.config.params, null, 2)
-      } else {
-        toolParamsJson.value = '{}'
+      if (newNode.type === 'tool') {
+        // 初始化工具参数
+        const existingParams = newNode.config.inputs || newNode.config.params || {}
+        if (newNode.config.tool_name && selectedToolSchema.value) {
+          // Schema 模式：初始化参数值
+          const schema = selectedToolSchema.value
+          const props_def = schema.properties || {}
+          Object.keys(toolParamValues).forEach((k) => delete toolParamValues[k])
+          for (const [key, def] of Object.entries(props_def)) {
+            toolParamValues[key] = existingParams[key] ?? (def as any).default ?? ''
+          }
+          toolParamsJson.value = JSON.stringify(existingParams, null, 2)
+        } else {
+          // JSON 模式
+          toolParamsJson.value = JSON.stringify(existingParams, null, 2)
+        }
       }
     }
   },
   { immediate: true, deep: true }
 )
+
+function onToolChange() {
+  // 切换工具时重置参数
+  Object.keys(toolParamValues).forEach((k) => delete toolParamValues[k])
+  const schema = selectedToolSchema.value
+  if (schema?.properties) {
+    for (const [key, def] of Object.entries(schema.properties)) {
+      toolParamValues[key] = (def as any).default ?? ''
+    }
+    localNode.value.config.inputs = { ...toolParamValues }
+  }
+  emitUpdate()
+}
+
+function emitToolParamsUpdate() {
+  // 将动态表单的值同步到 config.inputs（WorkflowEngine 通过 VariablePool 解析）
+  localNode.value.config.inputs = { ...toolParamValues }
+  // 同时更新 tool_name 以确保兼容性
+  localNode.value.config.tool_name = selectedTool.value?.name || localNode.value.config.tool_name
+  emitUpdate()
+}
+
+function getPlaceholder(propName: string): string {
+  return `支持变量模板 {{#trigger.${propName}#}}`
+}
 
 function emitUpdate() {
   emit('update', JSON.parse(JSON.stringify(localNode.value)))
@@ -302,7 +419,7 @@ function emitUpdate() {
 function updateToolParams() {
   try {
     const parsed = JSON.parse(toolParamsJson.value || '{}')
-    localNode.value.config.params = parsed
+    localNode.value.config.inputs = parsed
     emitUpdate()
   } catch (err) {
     // ignore JSON parse error on blur; user can fix it
