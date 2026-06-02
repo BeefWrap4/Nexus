@@ -63,7 +63,7 @@ class BaseAgent:
 
     基于WAT BaseAgent泛化:
     - 移除狼人杀专属逻辑（信任模型保留为可选）
-    - 增加ToolUse能力
+    - 增加ToolUse能力（通过 ToolRegistry 实际执行）
     - 增加Memory系统
     - 支持流式输出
 
@@ -85,12 +85,14 @@ class BaseAgent:
         trust_model: Optional[TrustModel] = None,
         decision_parser: Optional[DecisionParser] = None,
         memory: Optional[AgentMemory] = None,
+        tool_registry=None,
     ):
         self.config = config
         self.llm_client = llm_client or LLMClient()
         self.trust_model = trust_model
         self.decision_parser = decision_parser or DecisionParser()
         self.memory = memory
+        self.tool_registry = tool_registry
 
     async def execute(self, task: Task, context: dict[str, Any] = None) -> AgentResult:
         """执行Agent任务.
@@ -152,16 +154,42 @@ class BaseAgent:
                 )
 
             elif decision.action == "tool_call":
-                # 执行工具（由外部注入）
+                # 通过 ToolRegistry 实际执行工具
                 tool_calls.append({
                     "tool": decision.tool_name,
                     "params": decision.tool_params,
                 })
-                observations.append({
-                    "tool": decision.tool_name,
-                    "params": decision.tool_params,
-                    "result": "[Tool execution delegated to ToolRegistry]",
-                })
+                if self.tool_registry:
+                    try:
+                        result = await self.tool_registry.execute(
+                            tool_name=decision.tool_name,
+                            params=decision.tool_params or {},
+                            context={
+                                "run_id": ctx.get("run_id"),
+                                "tenant_id": ctx.get("tenant_id"),
+                                "user_id": ctx.get("user_id"),
+                            },
+                        )
+                        observations.append({
+                            "tool": decision.tool_name,
+                            "params": decision.tool_params,
+                            "result": result.data if result.success else result.error,
+                            "success": result.success,
+                        })
+                    except Exception as exc:
+                        observations.append({
+                            "tool": decision.tool_name,
+                            "params": decision.tool_params,
+                            "error": str(exc),
+                            "success": False,
+                        })
+                else:
+                    observations.append({
+                        "tool": decision.tool_name,
+                        "params": decision.tool_params,
+                        "result": "[ToolRegistry not configured — tool execution skipped]",
+                        "success": False,
+                    })
 
             elif decision.action == "think":
                 # 纯思考，继续循环

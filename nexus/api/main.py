@@ -55,6 +55,14 @@ async def lifespan(app: FastAPI):
     # 这是跨进程通信的关键：Worker publish → Redis → API listener → WebSocket
     listener_task = asyncio.create_task(event_bus.start_listener())
 
+    # 注册 RAG Tools（Smart Cache 集成）
+    from nexus.tools.rag import register_rag_tools
+    from nexus.tools.registry import ToolRegistry
+
+    tool_registry = ToolRegistry()
+    register_rag_tools(tool_registry)
+    app.state.tool_registry = tool_registry
+
     yield
 
     # 关闭（逆序）

@@ -198,33 +198,75 @@ class ToolRegistry:
     async def _execute_http(
         self, tool: Tool, params: dict[str, Any], context: dict[str, Any]
     ) -> ToolResult:
-        """执行HTTP工具."""
+        """执行HTTP工具.
+
+        增强功能:
+        1. auth_config 头注入 — 支持 header / bearer 类型
+        2. URL 模板替换 — 如 /sessions/{session_id}/history → 从 params 替换
+        3. JSON Schema 参数过滤 — 只发送 schema 中定义的参数到 HTTP body
+        """
         import httpx
 
         config = tool.config
         url = config.get("url", "")
         method = config.get("method", "GET").upper()
-        headers = config.get("headers", {})
+        headers = dict(config.get("headers", {}))
         timeout = config.get("timeout", 30)
+
+        # 1. 注入认证头
+        auth = tool.auth_config
+        if auth:
+            auth_type = auth.get("type", "")
+            if auth_type == "header":
+                headers[auth["key"]] = auth["value"]
+            elif auth_type == "bearer":
+                headers["Authorization"] = f"Bearer {auth.get('token', '')}"
+
+        # 2. URL 模板替换 — 提取 URL 中 {var} 并从 params 替换
+        url_vars = self._extract_url_variables(url)
+        url_params = {}
+        body_params = dict(params)
+        for var in url_vars:
+            if var in body_params:
+                url_params[var] = body_params.pop(var)
+                url = url.replace(f"{{{var}}}", str(url_params[var]))
+
+        # 3. JSON Schema 参数过滤 — 只保留 schema 中定义的参数
+        schema = tool.schema
+        if schema and schema.get("properties"):
+            allowed_keys = set(schema["properties"].keys())
+            # 保留 schema 定义的参数 + 已用于 URL 替换的参数已从 body 移除
+            body_params = {k: v for k, v in body_params.items() if k in allowed_keys}
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             if method == "GET":
-                response = await client.get(url, params=params, headers=headers)
+                response = await client.get(url, params=body_params, headers=headers)
             elif method == "POST":
-                response = await client.post(url, json=params, headers=headers)
+                response = await client.post(url, json=body_params, headers=headers)
             elif method == "PUT":
-                response = await client.put(url, json=params, headers=headers)
+                response = await client.put(url, json=body_params, headers=headers)
             elif method == "DELETE":
-                response = await client.delete(url, params=params, headers=headers)
+                response = await client.delete(url, params=body_params, headers=headers)
             else:
                 return ToolResult(success=False, error=f"Unsupported method: {method}")
 
             response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            is_json = content_type.startswith("application/json")
             return ToolResult(
                 success=True,
-                data=response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text,
-                metadata={"status_code": response.status_code},
+                data=response.json() if is_json else response.text,
+                metadata={"status_code": response.status_code, "content_type": content_type},
             )
+
+    def _extract_url_variables(self, url: str) -> list[str]:
+        """提取 URL 模板变量.
+
+        例如 /sessions/{session_id}/history → ["session_id"]
+        """
+        import re
+
+        return re.findall(r"\{(\w+)\}", url)
 
     async def _execute_sql(
         self, tool: Tool, params: dict[str, Any], context: dict[str, Any]

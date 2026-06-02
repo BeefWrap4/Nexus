@@ -111,6 +111,20 @@ class Settings(BaseSettings):
     AUDIT_LOG_RETENTION_DAYS: int = 90
 
     # ------------------------------------------------------------------
+    # RAG / Smart Cache 集成
+    # ------------------------------------------------------------------
+    SMART_CACHE_URL: str = Field(
+        default="http://localhost:8777", env="SMART_CACHE_URL"
+    )
+    SMART_CACHE_API_KEY: Optional[str] = Field(
+        default=None, env="SMART_CACHE_API_KEY"
+    )
+    SMART_CACHE_TIMEOUT: float = Field(default=30.0, env="SMART_CACHE_TIMEOUT")
+    SMART_CACHE_PROJECT_ID: str = Field(
+        default="nexus-default", env="SMART_CACHE_PROJECT_ID"
+    )
+
+    # ------------------------------------------------------------------
     # 可观测性
     # ------------------------------------------------------------------
     ENABLE_PROMETHEUS: bool = True
