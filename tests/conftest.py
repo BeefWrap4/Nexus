@@ -327,6 +327,40 @@ def cyclic_workflow() -> WorkflowDefinition:
 
 
 # ---------------------------------------------------------------------------
+# LLM集成测试 Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def deepseek_api() -> dict[str, str]:
+    """Lazy-load DeepSeek API key from .env.
+
+    Returns a dict with ``api_key``, ``base_url``, and ``model`` for
+    constructing an LLMClient pointed at the DeepSeek OpenAI-compatible
+    endpoint.
+    """
+    import os
+
+    from dotenv import load_dotenv
+
+    # Locate the .env file relative to the project root
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_path = os.path.join(project_root, ".env")
+    if os.path.isfile(env_path):
+        load_dotenv(env_path, override=False)
+
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set in .env")
+
+    return {
+        "api_key": api_key,
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+    }
+
+
+# ---------------------------------------------------------------------------
 # 通用Mock节点执行器
 # ---------------------------------------------------------------------------
 

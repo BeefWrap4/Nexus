@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # 数据库
+    # 数据库（开发用SQLite，生产环境通过环境变量覆盖为PostgreSQL）
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://nexus:nexus@localhost:5432/nexus",
+        default="sqlite+aiosqlite:///./nexus.db",
         env="DATABASE_URL",
     )
     DATABASE_POOL_SIZE: int = 10
@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     )
 
     # LLM模型配置（支持多模型Fallback）
-    DEFAULT_LLM_MODEL: str = Field(default="gpt-4o", env="DEFAULT_LLM_MODEL")
-    DEFAULT_LLM_PROVIDER: str = Field(default="openai", env="DEFAULT_LLM_PROVIDER")
+    DEFAULT_LLM_MODEL: str = Field(default="deepseek-chat", env="DEFAULT_LLM_MODEL")
+    DEFAULT_LLM_PROVIDER: str = Field(default="deepseek", env="DEFAULT_LLM_PROVIDER")
 
     # Fallback链：主模型 -> 备用模型列表
     # 示例: "gpt-4o,claude-sonnet-4,deepseek-chat"

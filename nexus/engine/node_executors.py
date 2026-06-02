@@ -14,9 +14,12 @@
 """
 
 import asyncio
+import os
 from typing import Any
 
 from nexus.agent.base import AgentConfig, BaseAgent, Task
+from nexus.agent.llm_client import LLMClient
+from nexus.config import settings
 from nexus.engine.hitl_controller import HITLController, HITLResponse, HITLType
 from nexus.engine.router_engine import RouterEngine
 from nexus.engine.state_manager import WorkflowState
@@ -134,30 +137,66 @@ class AgentNodeExecutor(NodeExecutor):
         state: WorkflowState,
         run_id: str,
     ) -> NodeResult:
-        """执行Agent节点."""
+        """执行Agent节点.
+
+        从 node.config 读取配置参数，创建 Agent 实例并执行任务。
+        """
         config = node.config
 
-        # 1. 获取Agent实例
-        agent = await self._get_agent(config)
-        if not agent:
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"message": f"Agent not found for node: {node.id}"},
-            )
+        # 1. 从 node.config 读取 Agent 配置
+        agent_name = config.get("agent_name", f"agent_{node.id}")
+        agent_role = config.get("agent_role", "")
+        agent_goal = config.get("agent_goal", "")
+        task_description = config.get("task_description", config.get("task", ""))
 
-        # 2. 构建Task
-        task = Task(
-            description=config.get("task", ""),
-            expected_output=config.get("expected_output", ""),
-            context=inputs,
+        # 2. 从 node.config 读取模型配置
+        model = config.get("model", "deepseek-chat")
+        provider = config.get("provider", "deepseek")
+
+        # 3. 创建 LLMClient 实例
+        # 智能路由：优先检查是否有 provider 专用 key 可直连
+        # 避免依赖未运行的 LiteLLM Proxy
+        provider_base_urls = {
+            "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
+            "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+            "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
+            "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+            "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+        }
+
+        # 优先用 provider 专用 key 直连
+        if provider in provider_base_urls:
+            direct_url, env_key = provider_base_urls[provider]
+            api_key = os.environ.get(env_key)
+            if api_key:
+                base_url = direct_url
+            else:
+                base_url = settings.LITELLM_PROXY_URL
+                api_key = settings.LITELLM_API_KEY
+        else:
+            base_url = settings.LITELLM_PROXY_URL
+            api_key = settings.LITELLM_API_KEY
+
+        llm_client = LLMClient(proxy_url=base_url, api_key=api_key)
+
+        # 4. 创建 AgentConfig + BaseAgent 实例
+        agent_config = AgentConfig(
+            name=agent_name,
+            role=agent_role,
+            goal=agent_goal,
+            provider=provider,
+            model=model,
         )
+        agent = BaseAgent(config=agent_config, llm_client=llm_client)
 
-        # 3. 执行Agent
+        # 5. 创建 Task
+        task = Task(description=task_description)
+
+        # 6. 执行 Agent
         try:
             result = await agent.execute(task, context={"run_id": run_id, "node_id": node.id})
 
-            # 4. 将Agent输出写入run_vars（供下游节点引用）
+            # 7. 将Agent输出写入run_vars（供下游节点引用）
             output_key = config.get("output_key", node.id)
             state.run_vars[output_key] = result.output
 

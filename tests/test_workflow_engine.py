@@ -17,16 +17,18 @@ import pytest
 from nexus.engine.enums import NodeStatus, NodeType, RunStatus
 from nexus.engine.state_manager import WorkflowState
 from nexus.engine.workflow_engine import (
-    CircularDependencyException,
     Edge,
     Node,
     NodeResult,
     RunResult,
     WorkflowDefinition,
     WorkflowEngine,
+)
+from nexus.exceptions import (
+    CircularDependencyException,
+    WorkflowExecutionException,
     WorkflowValidationException,
 )
-from nexus.exceptions import WorkflowExecutionException
 from tests.conftest import MockNodeExecutor
 
 

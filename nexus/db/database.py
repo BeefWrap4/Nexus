@@ -43,6 +43,9 @@ AsyncSessionLocal = async_sessionmaker(
 async def init_db():
     """初始化数据库（创建所有表）."""
     async with engine.begin() as conn:
+        # SQLite 数据库优化：启用 WAL 模式
+        if "sqlite" in settings.DATABASE_URL:
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.run_sync(Base.metadata.create_all)
 
 
