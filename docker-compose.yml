@@ -211,7 +211,7 @@ services:
       - nexus-network
 
   # ---------------------------------------------------------------------------
-  # Celery Worker
+  # ARQ Worker
   # ---------------------------------------------------------------------------
   worker:
     build:
@@ -238,6 +238,9 @@ services:
       LLM_MAX_CONCURRENT_CALLS: ${LLM_MAX_CONCURRENT_CALLS:-10}
       MAX_WORKFLOW_STEPS: ${MAX_WORKFLOW_STEPS:-500}
       WORKFLOW_TIMEOUT_SECONDS: ${WORKFLOW_TIMEOUT_SECONDS:-3600}
+      ARQ_WORKER_CONCURRENCY: ${ARQ_WORKER_CONCURRENCY:-10}
+      ARQ_JOB_TIMEOUT: ${ARQ_JOB_TIMEOUT:-3600}
+      ARQ_MAX_RETRIES: ${ARQ_MAX_RETRIES:-3}
     depends_on:
       postgres:
         condition: service_healthy
@@ -250,39 +253,7 @@ services:
     volumes:
       - ./nexus:/app/nexus:ro
       - nexus-logs:/app/logs
-    command: >
-      celery -A nexus.tasks.celery_app worker
-      --loglevel=${CELERY_LOG_LEVEL:-info}
-      --concurrency=${CELERY_CONCURRENCY:-4}
-      -Q ${CELERY_QUEUES:-default,workflow,agent}
-    networks:
-      - nexus-network
-
-  # ---------------------------------------------------------------------------
-  # Celery Beat (定时任务调度)
-  # ---------------------------------------------------------------------------
-  beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: ${DOCKER_BUILD_TARGET:-development}
-    container_name: nexus-beat
-    restart: unless-stopped
-    environment:
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      DEBUG: ${DEBUG:-false}
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./nexus:/app/nexus:ro
-      - nexus-logs:/app/logs
-    command: celery -A nexus.tasks.celery_app beat --loglevel=${CELERY_LOG_LEVEL:-info}
+    command: arq nexus.jobs.config.WorkerSettings
     networks:
       - nexus-network
 

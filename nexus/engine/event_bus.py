@@ -1,12 +1,13 @@
 """事件总线 - Pub/Sub模式.
 
 基于WAT GameEngine._event_subscribers 升级:
-- 从本地回调升级为Redis-backed事件总线
+- 本地回调 + Redis-backed Pub/Sub 混合架构
 - Topic-based路由（借鉴AutoGen v0.4+）
-- 支持持久化和回溯
+- 支持持久化（Redis Streams）和实时广播（Redis Pub/Sub）
 """
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -28,12 +29,17 @@ class EventBus:
     对应WAT设计:
     - GameEngine._event_subscribers → _local_subscribers
     - _emit_event() → publish()
+
+    跨进程通信:
+    - publish() → Redis Pub/Sub → 所有进程收到
+    - start_listener() → 在 API 进程中运行，接收 Redis 消息并触发本地 handler
     """
 
     def __init__(self, redis_client=None):
         self.redis = redis_client
         self._local_subscribers: dict[str, list[Callable[[dict[str, Any]], Any]]] = {}
         self._history: list[dict[str, Any]] = []  # 本地历史（开发环境）
+        self._pubsub = None
 
     async def publish(self, event: dict[str, Any]) -> None:
         """发布事件.
@@ -47,17 +53,38 @@ class EventBus:
         # 1. 本地历史记录
         self._history.append(event)
 
-        # 2. 写入Redis Streams（生产环境）
+        # 2. 写入Redis Streams + Pub/Sub 广播（生产环境）
         if self.redis:
             tenant_id = event.get("tenant_id", "default")
-            await self.redis.xadd(
-                f"nexus:events:{tenant_id}",
-                {"data": str(event)},  # 简化为字符串存储
-            )
+            try:
+                # Streams 持久化
+                await self.redis.xadd(
+                    f"nexus:events:{tenant_id}",
+                    {"data": str(event)},
+                )
+                # Pub/Sub 实时广播（跨进程）
+                await self.redis.publish(
+                    f"nexus:events:{tenant_id}",
+                    json.dumps(event),
+                )
+            except Exception:
+                # Redis 不可用时不阻塞事件流
+                pass
 
-        # 3. 本地广播（WebSocket推送）
+        # 3. 本地广播（WebSocket推送等）
+        await self._broadcast_local(event)
+
+    async def _broadcast_local(self, event: dict[str, Any]) -> None:
+        """本地广播事件到所有匹配的订阅者."""
         topic = self._get_topic(event)
-        for handler in self._local_subscribers.get(topic, []):
+        handlers: list[Callable] = []
+
+        # 精确匹配
+        handlers.extend(self._local_subscribers.get(topic, []))
+        # 通配符匹配
+        handlers.extend(self._local_subscribers.get("*", []))
+
+        for handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
                     asyncio.create_task(handler(event))
@@ -65,16 +92,6 @@ class EventBus:
                     handler(event)
             except Exception:
                 # 事件处理失败不应影响其他订阅者
-                pass
-
-        # 4. 广播到通配符订阅者
-        for handler in self._local_subscribers.get("*", []):
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(event))
-                else:
-                    handler(event)
-            except Exception:
                 pass
 
     def subscribe(
@@ -122,3 +139,45 @@ class EventBus:
             e for e in self._history
             if self._get_topic(e) == topic or topic in self._get_topic(e)
         ][-limit:]
+
+    # ------------------------------------------------------------------
+    # Redis Pub/Sub 跨进程监听
+    # ------------------------------------------------------------------
+
+    async def start_listener(self) -> None:
+        """启动 Redis Pub/Sub 监听循环.
+
+        在 API 进程中运行，接收来自 Worker 的事件并触发本地 handler。
+        这是跨进程通信的关键：Worker publish → Redis → API listener → WebSocket。
+        """
+        if not self.redis:
+            return
+
+        import structlog
+        logger = structlog.get_logger()
+        logger.info("event_bus_redis_listener_starting")
+
+        try:
+            self._pubsub = self.redis.pubsub()
+            await self._pubsub.psubscribe("nexus:events:*")
+            logger.info("event_bus_redis_listener_started")
+
+            async for message in self._pubsub.listen():
+                if message["type"] == "pmessage":
+                    try:
+                        event = json.loads(message["data"])
+                        await self._broadcast_local(event)
+                    except (json.JSONDecodeError, Exception):
+                        # 消息解析失败不阻塞
+                        pass
+        except asyncio.CancelledError:
+            logger.info("event_bus_redis_listener_cancelled")
+            if self._pubsub:
+                await self._pubsub.punsubscribe()
+            raise
+
+    async def stop_listener(self) -> None:
+        """停止 Redis Pub/Sub 监听循环."""
+        if self._pubsub:
+            await self._pubsub.punsubscribe()
+            self._pubsub = None

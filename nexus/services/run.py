@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -20,6 +21,20 @@ from nexus.exceptions import (
     WorkflowNotFoundException,
     WorkflowExecutionException,
 )
+
+
+async def _execute_in_background(
+    run_id: str,
+    config: dict[str, Any],
+    trigger_payload: dict[str, Any],
+    runner,
+):
+    """后台执行工作流（ARQ 降级路径）."""
+    try:
+        result = await runner.execute_from_config(config, trigger_payload, run_id)
+        print(f"[Runner] run_id={run_id} completed: {result.status.value}")
+    except Exception:
+        print(f"[Runner] run_id={run_id} failed:\n{traceback.format_exc()}")
 
 
 class RunService(BaseService[WorkflowRun]):
@@ -106,6 +121,32 @@ class RunService(BaseService[WorkflowRun]):
             session, workflow_id, tenant_id
         )
 
+        # 获取工作流配置用于入队
+        workflow = await self.workflow_service.get(session, workflow_id, tenant_id)
+
+        # ARQ 入队（优先）或本地降级执行
+        from nexus.jobs.pool import get_arq_pool
+        arq_pool = get_arq_pool()
+        if arq_pool and workflow and workflow.config:
+            await arq_pool.enqueue_job(
+                "execute_workflow_job",
+                run_id=str(run.id),
+                workflow_config=workflow.config,
+                trigger_payload=trigger_payload or {},
+                tenant_id=str(tenant_id),
+            )
+        elif workflow and workflow.config:
+            # 降级：本地异步执行（ARQ 未初始化时）
+            from nexus.services.runner import runner as _runner
+            asyncio.create_task(
+                _execute_in_background(
+                    run_id=str(run.id),
+                    config=workflow.config,
+                    trigger_payload=trigger_payload or {},
+                    runner=_runner,
+                )
+            )
+
         return run
 
     async def get(
@@ -127,6 +168,40 @@ class RunService(BaseService[WorkflowRun]):
     ) -> tuple[list[WorkflowRun], int]:
         """分页列表查询，支持按workflow_id和status过滤."""
         return await super().list(session, tenant_id, skip, limit, filters)
+
+    async def list_by_workflow(
+        self,
+        session: AsyncSession,
+        workflow_id: UUID,
+        tenant_id: UUID,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[WorkflowRun], int]:
+        """按工作流ID查询执行记录."""
+        from sqlalchemy import func, select
+        from nexus.models import WorkflowRun
+
+        stmt = (
+            select(WorkflowRun)
+            .where(
+                WorkflowRun.workflow_id == workflow_id,
+                WorkflowRun.tenant_id == tenant_id,
+            )
+            .order_by(WorkflowRun.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        items = list(result.scalars().all())
+
+        count_stmt = select(func.count()).where(
+            WorkflowRun.workflow_id == workflow_id,
+            WorkflowRun.tenant_id == tenant_id,
+        )
+        count_result = await session.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        return items, total
 
     async def update(
         self,

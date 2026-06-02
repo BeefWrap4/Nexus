@@ -2,13 +2,14 @@
 
 基于WAT api/websocket.py 升级:
 - 复用架构
-- 增加频道隔离
-- 支持多租户
+- 增加EventBus桥接（跨进程事件→WebSocket推送）
+- JWT Token验证
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
-from nexus.security.auth import get_current_user
+from nexus.security.auth import AuthService
+from nexus.engine.event_bus import EventBus
 
 router = APIRouter()
 
@@ -80,6 +81,33 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def subscribe_websocket_to_eventbus(event_bus: EventBus, conn_mgr: ConnectionManager) -> None:
+    """将 WebSocket 连接管理器订阅到 EventBus.
+
+    当 EventBus 收到 run 相关事件时，自动推送到对应 run_id 的 WebSocket 客户端。
+    这是跨进程通信的最后一环：Worker → Redis → API EventBus → WebSocket → 浏览器。
+    """
+    async def forward_to_websocket(event: dict) -> None:
+        run_id = event.get("run_id")
+        if not run_id:
+            return
+        # 只转发 run 状态相关事件，避免噪音
+        if event.get("type") in (
+            "run_started",
+            "run_state_update",
+            "run_completed",
+            "run_failed",
+            "node_error",
+            "hitl_request",
+            "hitl_response",
+            "hitl_cancelled",
+        ):
+            await conn_mgr.broadcast_to_run(run_id, event)
+
+    # 订阅通配符 topic（EventBus 支持精确匹配和 * 通配符）
+    event_bus.subscribe("*", forward_to_websocket)
+
+
 @router.websocket("/ws/v1/runs/{run_id}")
 async def workflow_websocket(
     websocket: WebSocket,
@@ -88,10 +116,18 @@ async def workflow_websocket(
 ):
     """工作流执行WebSocket.
 
-    客户端通过此连接接收实时执行状态更新。
+    客户端通过此连接接收实时执行状态更新和HITL审批请求。
     """
-    # 简化版：不验证token
+    # JWT Token 验证
     user_id = "anonymous"
+    if token:
+        try:
+            payload = AuthService.verify_token(token)
+            user_id = payload.get("sub", "anonymous")
+        except Exception:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+
     await manager.connect(websocket, run_id, user_id)
 
     try:
@@ -105,8 +141,18 @@ async def workflow_websocket(
 
             # 处理HITL响应
             elif data.get("type") == "hitl_response":
-                # 转发到HITLController
-                pass
+                # HITL 响应通过 REST API 处理更合适
+                # WebSocket 只负责实时推送，不处理业务逻辑
+                # 这里仅转发确认收到
+                await websocket.send_json({
+                    "type": "hitl_response_ack",
+                    "task_id": data.get("task_id"),
+                    "status": "forwarded",
+                })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, run_id, user_id)
+    except Exception:
+        # 其他异常也应断开连接
+        manager.disconnect(websocket, run_id, user_id)
+        raise

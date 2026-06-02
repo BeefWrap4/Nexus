@@ -89,7 +89,7 @@ async def get_current_user(
         # 生产环境应查询数据库
         return {
             "id": "api-key-user",
-            "tenant_id": "default",
+            "tenant_id": "00000000-0000-0000-0000-000000000000",
             "role": "member",
             "auth_type": "api_key",
         }

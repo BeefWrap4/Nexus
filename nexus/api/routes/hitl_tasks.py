@@ -2,11 +2,12 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
+from nexus.engine.event_bus import EventBus
 from nexus.security.auth import get_current_user
 from nexus.services.hitl import HITLService
 
@@ -79,10 +80,15 @@ async def get_hitl_task(
 async def respond_to_hitl_task(
     task_id: UUID,
     data: HITLResponseRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """提交审批响应."""
+    """提交审批响应.
+
+    响应后通过 EventBus 广播 hitl_response 事件，
+    让执行工作流的 Worker 收到并恢复执行。
+    """
     tenant_id = UUID(current_user.get("tenant_id", "default"))
     user_id = current_user.get("id")
     response_payload = {
@@ -103,6 +109,29 @@ async def respond_to_hitl_task(
     if not task:
         raise HTTPException(status_code=404, detail="HITL task not found")
     await db.commit()
+
+    # 广播 HITL 响应事件（跨进程：Worker 通过 Redis Pub/Sub 收到）
+    event_bus = None
+    if hasattr(request.app.state, "event_bus"):
+        event_bus = request.app.state.event_bus
+    else:
+        event_bus = EventBus()
+
+    try:
+        await event_bus.publish(
+            {
+                "type": "hitl_response",
+                "task_id": str(task_id),
+                "run_id": str(task.wf_run_id),
+                "node_id": task.node_id,
+                "response": response_payload,
+                "tenant_id": str(tenant_id),
+            }
+        )
+    except Exception:
+        # 事件广播失败不应阻塞 API 响应
+        pass
+
     return {
         "task_id": str(task.id),
         "status": task.status,

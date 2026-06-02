@@ -236,31 +236,32 @@ def run_server(
 # ---------------------------------------------------------------------------
 @app.command("worker")
 def run_worker(
-    queues: list[str] = typer.Option(
-        ["default"], "--queue", "-Q", help="监听的队列"
-    ),
-    concurrency: int = typer.Option(4, "--concurrency", "-c", help="并发数"),
-    loglevel: str = typer.Option("info", "--loglevel", "-l", help="日志级别"),
+    name: str = typer.Option("nexus-worker", "--name", "-n", help="Worker名称"),
+    concurrency: int = typer.Option(10, "--concurrency", "-c", help="并发数"),
 ):
-    """启动Celery Worker."""
-    # 检查Celery是否安装
+    """启动ARQ Worker.
+
+    ARQ 是基于 Redis 的纯异步任务队列，支持:
+    - 自动重试（max_tries=3）
+    - 延迟执行（defer_by）
+    - 任务结果保留（keep_result=3600s）
+    """
     try:
-        import celery  # noqa: F401
+        import arq  # noqa: F401
     except ImportError:
-        console.print("[bold red]Celery is not installed. Run: pip install celery[/bold red]")
+        console.print("[bold red]arq is not installed. Run: pip install arq[/bold red]")
         raise typer.Exit(1)
 
-    cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "nexus.tasks.celery_app",
-        "worker",
-        "--loglevel", loglevel,
-        "--concurrency", str(concurrency),
-    ]
-    for q in queues:
-        cmd.extend(["-Q", q])
+    # 通过环境变量传递并发配置（WorkerSettings 读取）
+    os.environ["ARQ_WORKER_CONCURRENCY"] = str(concurrency)
 
-    console.print(f"[bold blue]Starting Celery worker...[/bold blue]")
+    cmd = [
+        sys.executable, "-m", "arq",
+        "nexus.jobs.config.WorkerSettings",
+    ]
+
+    console.print(f"[bold blue]Starting ARQ worker ({name})...[/bold blue]")
+    console.print(f"[dim]Concurrency: {concurrency}[/dim]")
     console.print(f"[dim]{' '.join(cmd)}[/dim]")
 
     try:

@@ -7,25 +7,65 @@
 - 集成OpenTelemetry
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 
 from nexus.config import settings
 from nexus.db.database import close_db, init_db
+from nexus.engine.event_bus import EventBus
 from nexus.exceptions import NexusException
+from nexus.jobs.pool import close_arq_pool, init_arq_pool
 from nexus.security.rbac import RBACMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理."""
+    """应用生命周期管理.
+
+    初始化顺序:
+    1. 数据库
+    2. ARQ Redis 连接池
+    3. Redis 客户端（EventBus + 通用缓存）
+    4. EventBus（带 Redis Pub/Sub）
+    5. WebSocket 桥接（EventBus → WebSocket）
+    6. EventBus Redis 监听（后台任务，接收 Worker 事件）
+    """
     # 启动
     await init_db()
+    await init_arq_pool()
+
+    # Redis 客户端（用于 EventBus 和通用缓存）
+    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    app.state.redis = redis_client
+
+    # EventBus（带 Redis，用于跨进程通信）
+    event_bus = EventBus(redis_client=redis_client)
+    app.state.event_bus = event_bus
+
+    # WebSocket 桥接：EventBus 事件 → WebSocket 推送
+    from nexus.api.websocket import manager, subscribe_websocket_to_eventbus
+    subscribe_websocket_to_eventbus(event_bus, manager)
+
+    # 启动 Redis Pub/Sub 监听（后台任务）
+    # 这是跨进程通信的关键：Worker publish → Redis → API listener → WebSocket
+    listener_task = asyncio.create_task(event_bus.start_listener())
+
     yield
-    # 关闭
+
+    # 关闭（逆序）
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        pass
+
+    await redis_client.close()
+    await close_arq_pool()
     await close_db()
 
 
@@ -68,12 +108,14 @@ async def health():
 
 # 导入并注册路由（使用Service层）
 from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks
+from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(runs.router, prefix="/api/v1/runs", tags=["runs"])
 app.include_router(hitl_tasks.router, prefix="/api/v1/hitl", tags=["hitl"])
+app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）
 
 
 @app.get("/")

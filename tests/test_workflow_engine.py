@@ -514,7 +514,10 @@ class TestWorkflowEngineInternals:
             ),
         }
         ready = workflow_engine._get_ready_nodes(graph, state)
-        assert len(ready) == 0
+        # start 节点无依赖，应是就绪的
+        assert any(n.id == "start" for n in ready)
+        # agent 节点依赖 start（未完成），不应就绪
+        assert not any(n.id == "agent" for n in ready)
 
     def test_merge_result_success(self, workflow_engine):
         """测试成功结果合并到状态."""

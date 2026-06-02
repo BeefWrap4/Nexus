@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
 
+    # ARQ Worker 配置
+    ARQ_WORKER_CONCURRENCY: int = Field(default=10, env="ARQ_WORKER_CONCURRENCY")
+    ARQ_JOB_TIMEOUT: int = Field(default=3600, env="ARQ_JOB_TIMEOUT")  # 1小时
+    ARQ_MAX_RETRIES: int = Field(default=3, env="ARQ_MAX_RETRIES")
+    ARQ_KEEP_RESULT: int = Field(default=3600, env="ARQ_KEEP_RESULT")  # 结果保留1小时
+
     # ------------------------------------------------------------------
     # LLM网关 (LiteLLM Proxy)
     # ------------------------------------------------------------------

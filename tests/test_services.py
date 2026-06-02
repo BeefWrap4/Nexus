@@ -228,6 +228,9 @@ class TestWorkflowService:
     @pytest.mark.asyncio
     async def test_create_creates_initial_version(self, db_session: AsyncSession):
         """创建工作流时应自动创建v1版本快照."""
+        from sqlalchemy import select
+        from nexus.models import WorkflowVersion
+
         service = WorkflowService()
         tenant_id = uuid4()
         user_id = uuid4()
@@ -243,11 +246,16 @@ class TestWorkflowService:
         )
         await db_session.commit()
 
+        # 重新查询以获取最新状态（避免 async lazy load 问题）
+        stmt = select(WorkflowVersion).where(WorkflowVersion.workflow_id == wf.id)
+        result = await db_session.execute(stmt)
+        versions = result.scalars().all()
+
         assert wf.current_version == 1
         # 验证版本已创建
-        assert len(wf.versions) == 1
-        assert wf.versions[0].version == 1
-        assert wf.versions[0].change_notes == "Initial version"
+        assert len(versions) == 1
+        assert versions[0].version == 1
+        assert versions[0].change_notes == "Initial version"
 
     @pytest.mark.asyncio
     async def test_get_by_name(self, db_session: AsyncSession):

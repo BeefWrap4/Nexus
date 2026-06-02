@@ -5,6 +5,7 @@
 - 4种审批类型: approve/select/input/correct
 - 超时机制 + 默认策略
 - 多渠道通知
+- **持久化到数据库**（支持跨 Worker 响应）
 
 借鉴LangGraph interrupt() + Camunda Human Task。
 """
@@ -16,6 +17,7 @@ from enum import Enum
 from typing import Any, Optional
 
 from nexus.config import settings
+from nexus.db.database import get_db_session
 from nexus.engine.event_bus import EventBus
 from nexus.exceptions import HITLException, HITLTaskNotFoundException, HITLTimeoutException
 
@@ -51,7 +53,7 @@ class HITLResponse:
 
 @dataclass
 class HITLTask:
-    """审批任务."""
+    """审批任务（内存表示）."""
 
     id: str
     run_id: str
@@ -77,7 +79,14 @@ class HITLTask:
 
 
 class HITLController:
-    """人工在环控制器."""
+    """人工在环控制器.
+
+    跨 Worker 设计:
+    - create_task() → 写入 DB + 内存缓存 + EventBus 广播
+    - wait_for_response() → 订阅 EventBus（替代 asyncio.Future）
+    - submit_response() → 更新 DB + EventBus 广播（Worker/API 均可调用）
+    - API 路由响应后通过 EventBus 广播，Worker 通过 Pub/Sub 收到并恢复
+    """
 
     def __init__(
         self,
@@ -86,8 +95,7 @@ class HITLController:
     ):
         self.event_bus = event_bus
         self.notification = notification_service
-        self._tasks: dict[str, HITLTask] = {}  # 内存缓存
-        self._waiters: dict[str, asyncio.Future] = {}  # 等待响应的Future
+        self._tasks: dict[str, HITLTask] = {}  # 内存缓存（Worker 本地）
         self._lock = asyncio.Lock()  # 并发安全锁
 
     async def create_task(
@@ -119,10 +127,32 @@ class HITLController:
             deadline=deadline,
         )
 
+        # 1. 持久化到数据库
+        try:
+            from nexus.models.hitl import HITLTask as HITLTaskORM
+            async with get_db_session() as session:
+                db_task = HITLTaskORM(
+                    id=task.id,
+                    wf_run_id=run_id,
+                    node_id=node_id,
+                    task_type=task_type.value,
+                    title=title,
+                    description=description,
+                    context=context,
+                    assignee_id=assignee_id,
+                    status="pending",
+                    deadline=deadline,
+                )
+                session.add(db_task)
+        except Exception:
+            # DB 写入失败不阻塞（降级到纯内存模式）
+            pass
+
+        # 2. 缓存到内存
         async with self._lock:
             self._tasks[task.id] = task
 
-        # 2. 推送WebSocket事件（实时通知前端）
+        # 3. 推送事件（实时通知前端 + 跨进程广播）
         await self.event_bus.publish(
             {
                 "type": "hitl_request",
@@ -137,7 +167,7 @@ class HITLController:
             }
         )
 
-        # 3. 多渠道通知
+        # 4. 多渠道通知
         if self.notification and assignee_id:
             await self.notification.send(
                 user_id=assignee_id,
@@ -160,51 +190,68 @@ class HITLController:
     ) -> HITLResponse:
         """等待审批响应.
 
-        对应WAT HumanProxy等待外部输入。
-
-        Args:
-            task_id: 审批任务ID
-            timeout: 超时时间（秒），None则使用任务deadline
-            default_on_timeout: 超时后的默认响应，None则抛出异常
-
-        Returns:
-            HITLResponse: 审批响应
-
-        Raises:
-            HITLTaskNotFoundException: 任务不存在
-            HITLTimeoutException: 超时且无默认响应
+        跨 Worker 实现：通过 EventBus 订阅替代 asyncio.Future。
+        Worker A 创建任务后进入等待；用户通过 API 提交响应；
+        API 进程广播到 Redis Pub/Sub；Worker A 的 EventBus listener 收到后触发 handler。
         """
+        # 检查内存缓存（可能已提前响应）
         async with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
-                raise HITLTaskNotFoundException(task_id)
-
-            # 如果任务已有响应（提前提交），直接返回
-            if task.response is not None:
+            if task and task.response is not None:
                 return task.response
 
-            # 创建Future等待响应
-            future = asyncio.get_event_loop().create_future()
-            self._waiters[task_id] = future
+        # 从数据库检查（跨 Worker 场景）
+        if not task or task.response is None:
+            try:
+                from nexus.models.hitl import HITLTask as HITLTaskORM
+                from sqlalchemy import select
+                async with get_db_session() as session:
+                    stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                    result = await session.execute(stmt)
+                    db_task = result.scalar_one_or_none()
+                    if db_task and db_task.response:
+                        resp = HITLResponse(**db_task.response)
+                        # 缓存到内存
+                        if task:
+                            task.response = resp
+                            task.status = HITLStatus(db_task.status)
+                        return resp
+                    if not db_task:
+                        raise HITLTaskNotFoundException(task_id)
+            except HITLTaskNotFoundException:
+                raise
+            except Exception:
+                pass  # DB 查询失败继续等待
+
+        # 使用 EventBus 订阅等待响应
+        response_event = asyncio.Event()
+        response_data: dict[str, Any] = {}
+
+        async def on_response(event: dict[str, Any]) -> None:
+            if event.get("task_id") == task_id:
+                response_data["response"] = event.get("response")
+                response_event.set()
+
+        sub = self.event_bus.subscribe(f"hitl_response:{task_id}", on_response)
 
         # 计算超时
         timeout_seconds = timeout or settings.DEFAULT_HITL_TIMEOUT_SECONDS
-        if task.deadline:
+        if task and task.deadline:
             remaining = (task.deadline - datetime.now(timezone.utc)).total_seconds()
             timeout_seconds = min(timeout_seconds, max(0, remaining))
 
         try:
-            response = await asyncio.wait_for(future, timeout=timeout_seconds)
-            return response
+            await asyncio.wait_for(response_event.wait(), timeout=timeout_seconds)
+            return HITLResponse(**response_data["response"])
         except asyncio.TimeoutError:
             async with self._lock:
-                task.status = HITLStatus.TIMEOUT
+                if task_id in self._tasks:
+                    self._tasks[task_id].status = HITLStatus.TIMEOUT
             if default_on_timeout is not None:
                 return default_on_timeout
             raise HITLTimeoutException(task_id)
         finally:
-            async with self._lock:
-                self._waiters.pop(task_id, None)
+            self.event_bus.unsubscribe(sub)
 
     async def submit_response(
         self,
@@ -215,45 +262,79 @@ class HITLController:
         """用户提交审批响应 - 恢复工作流执行.
 
         对应WAT HumanProxy接收前端输入。
-
-        Args:
-            task_id: 审批任务ID
-            user_id: 提交用户ID
-            response: 审批响应
-
-        Returns:
-            HITLTask: 更新后的任务
-
-        Raises:
-            HITLTaskNotFoundException: 任务不存在
-            PermissionDeniedException: 无权响应
         """
         async with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
+
+        # 1. 从数据库验证任务存在（如果不在内存中）
+        if not task:
+            try:
+                from nexus.models.hitl import HITLTask as HITLTaskORM
+                from sqlalchemy import select
+                async with get_db_session() as session:
+                    stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                    result = await session.execute(stmt)
+                    db_task = result.scalar_one_or_none()
+                    if not db_task:
+                        raise HITLTaskNotFoundException(task_id)
+                    # 创建内存缓存
+                    task = HITLTask(
+                        id=db_task.id,
+                        run_id=str(db_task.wf_run_id),
+                        node_id=db_task.node_id,
+                        task_type=HITLType(db_task.task_type),
+                        title=db_task.title,
+                        description=db_task.description or "",
+                        context=db_task.context or {},
+                        assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
+                        status=HITLStatus(db_task.status),
+                        deadline=db_task.deadline,
+                        created_at=db_task.created_at,
+                    )
+                    async with self._lock:
+                        self._tasks[task_id] = task
+            except HITLTaskNotFoundException:
+                raise
+            except Exception:
                 raise HITLTaskNotFoundException(task_id)
 
-            # 1. 验证权限
-            if task.assignee_id and task.assignee_id != user_id:
-                from nexus.exceptions import PermissionDeniedException
-                raise PermissionDeniedException(
-                    resource=f"hitl_task:{task_id}",
-                    action="respond",
-                )
+        # 2. 验证权限
+        if task.assignee_id and task.assignee_id != user_id:
+            from nexus.exceptions import PermissionDeniedException
+            raise PermissionDeniedException(
+                resource=f"hitl_task:{task_id}",
+                action="respond",
+            )
 
-            # 2. 验证任务状态
-            if task.status != HITLStatus.PENDING:
-                raise HITLException(
-                    f"Task '{task_id}' is already {task.status.value}",
-                    code="HITL_TASK_ALREADY_RESPONDED",
-                )
+        # 3. 验证任务状态
+        if task.status != HITLStatus.PENDING:
+            raise HITLException(
+                f"Task '{task_id}' is already {task.status.value}",
+                code="HITL_TASK_ALREADY_RESPONDED",
+            )
 
-            # 3. 更新任务状态
+        # 4. 更新内存状态
+        async with self._lock:
             task.status = HITLStatus.APPROVED if response.approved else HITLStatus.REJECTED
             task.response = response
             task.responded_at = datetime.now(timezone.utc)
 
-        # 4. 广播响应事件
+        # 5. 更新数据库
+        try:
+            from nexus.models.hitl import HITLTask as HITLTaskORM
+            from sqlalchemy import select
+            async with get_db_session() as session:
+                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                result = await session.execute(stmt)
+                db_task = result.scalar_one_or_none()
+                if db_task:
+                    db_task.status = "approved" if response.approved else "rejected"
+                    db_task.response = response.__dict__
+                    db_task.responded_at = datetime.now(timezone.utc)
+        except Exception:
+            pass  # DB 更新失败不阻塞
+
+        # 6. 广播响应事件（跨进程：Worker 通过 Pub/Sub 收到后恢复）
         await self.event_bus.publish(
             {
                 "type": "hitl_response",
@@ -269,13 +350,6 @@ class HITLController:
                 },
             }
         )
-
-        # 5. 唤醒等待的Future
-        async with self._lock:
-            if task_id in self._waiters:
-                future = self._waiters[task_id]
-                if not future.done():
-                    future.set_result(response)
 
         return task
 
@@ -296,20 +370,43 @@ class HITLController:
         """获取任务详情."""
         async with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
-                raise HITLTaskNotFoundException(task_id)
-            return task
+            if task:
+                return task
+
+        # 从数据库加载
+        try:
+            from nexus.models.hitl import HITLTask as HITLTaskORM
+            from sqlalchemy import select
+            async with get_db_session() as session:
+                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                result = await session.execute(stmt)
+                db_task = result.scalar_one_or_none()
+                if not db_task:
+                    raise HITLTaskNotFoundException(task_id)
+                task = HITLTask(
+                    id=db_task.id,
+                    run_id=str(db_task.wf_run_id),
+                    node_id=db_task.node_id,
+                    task_type=HITLType(db_task.task_type),
+                    title=db_task.title,
+                    description=db_task.description or "",
+                    context=db_task.context or {},
+                    assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
+                    status=HITLStatus(db_task.status),
+                    response=HITLResponse(**db_task.response) if db_task.response else None,
+                    deadline=db_task.deadline,
+                    responded_at=db_task.responded_at,
+                    created_at=db_task.created_at,
+                )
+                self._tasks[task_id] = task
+                return task
+        except HITLTaskNotFoundException:
+            raise
+        except Exception:
+            raise HITLTaskNotFoundException(task_id)
 
     async def cancel_task(self, task_id: str, user_id: str) -> HITLTask:
-        """取消审批任务.
-
-        Args:
-            task_id: 审批任务ID
-            user_id: 操作用户ID
-
-        Returns:
-            HITLTask: 更新后的任务
-        """
+        """取消审批任务."""
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -319,12 +416,22 @@ class HITLController:
             task.responded_at = datetime.now(timezone.utc)
             task.response = HITLResponse(approved=False, notes="Cancelled by operator")
 
-            # 唤醒等待的Future
-            if task_id in self._waiters:
-                future = self._waiters[task_id]
-                if not future.done():
-                    future.set_result(task.response)
+        # 更新数据库
+        try:
+            from nexus.models.hitl import HITLTask as HITLTaskORM
+            from sqlalchemy import select
+            async with get_db_session() as session:
+                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                result = await session.execute(stmt)
+                db_task = result.scalar_one_or_none()
+                if db_task:
+                    db_task.status = "rejected"
+                    db_task.response = task.response.__dict__
+                    db_task.responded_at = datetime.now(timezone.utc)
+        except Exception:
+            pass
 
+        # 广播取消事件
         await self.event_bus.publish(
             {
                 "type": "hitl_cancelled",

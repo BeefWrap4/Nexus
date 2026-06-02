@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -131,7 +131,7 @@ def client(override_get_db) -> TestClient:
 @pytest_asyncio.fixture(scope="function")
 async def async_client(override_get_db) -> AsyncGenerator[AsyncClient, None]:
     """提供异步HTTP客户端."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 
@@ -175,15 +175,25 @@ def auth_headers(test_token: str) -> dict[str, str]:
 
 @pytest.fixture(scope="function")
 def mock_state_manager() -> MagicMock:
-    """Mock StateManager."""
+    """Mock StateManager.
+
+    create_state 根据传入的 workflow_def 初始化所有节点为 PENDING，
+    这样 _get_ready_nodes() 才能正确识别就绪节点。
+    """
     mgr = MagicMock(spec=StateManager)
-    mgr.create_state = MagicMock(return_value=WorkflowState(
-        run_id="test-run-001",
-        workflow_id="test-wf-001",
-        version=1,
-        status=RunStatus.RUNNING,
-        node_states={},
-    ))
+
+    def _create_state(workflow_def, trigger_payload, run_id):
+        node_states = {node.id: NodeStatus.PENDING for node in workflow_def.nodes}
+        return WorkflowState(
+            run_id=run_id,
+            workflow_id=getattr(workflow_def, "workflow_id", "test-wf-001"),
+            version=getattr(workflow_def, "version", 1),
+            status=RunStatus.RUNNING,
+            node_states=node_states,
+            trigger_payload=trigger_payload,
+        )
+
+    mgr.create_state = MagicMock(side_effect=_create_state)
     mgr.update_status = AsyncMock()
     mgr.update_node_state = AsyncMock()
     mgr.get_state = MagicMock(return_value=None)
