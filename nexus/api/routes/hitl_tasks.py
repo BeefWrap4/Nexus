@@ -127,9 +127,11 @@ async def respond_to_hitl_task(
                 "tenant_id": str(tenant_id),
             }
         )
-    except Exception:
-        # 事件广播失败不应阻塞 API 响应
-        pass
+    except Exception as exc:
+        # 事件广播失败不应阻塞 API 响应，但需记录日志
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("Failed to broadcast HITL response event: %s", exc)
 
     return {
         "task_id": str(task.id),

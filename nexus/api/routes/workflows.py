@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nexus.db.database import get_db
 from nexus.exceptions import WorkflowNotFoundException
 from nexus.security.auth import get_current_user
+from nexus.services.run import RunService
 from nexus.services.workflow import WorkflowService, WorkflowVersionService
 
 router = APIRouter()
@@ -169,8 +170,6 @@ async def trigger_workflow_run(
     current_user: dict = Depends(get_current_user),
 ):
     """触发工作流执行."""
-    from nexus.services.run import RunService
-
     tenant_id = UUID(current_user.get("tenant_id", "default"))
     run_service = RunService()
     run = await run_service.trigger(
@@ -198,8 +197,6 @@ async def list_workflow_runs(
     current_user: dict = Depends(get_current_user),
 ):
     """列出工作流执行记录."""
-    from nexus.services.run import RunService
-
     tenant_id = UUID(current_user.get("tenant_id", "default"))
     run_service = RunService()
     items, _ = await run_service.list_by_workflow(db, workflow_id, tenant_id, skip, limit)

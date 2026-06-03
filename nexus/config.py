@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: str = Field(default="development", validation_alias="ENVIRONMENT")
     DEBUG: bool = Field(default=False, validation_alias="DEBUG")
+    CORS_ALLOWED_ORIGINS: list[str] = Field(
+        default_factory=list, validation_alias="CORS_ALLOWED_ORIGINS"
+    )
 
     # 安全
     # NOTE: 生产环境必须设置强 SECRET_KEY（≥32字符），启动时会校验
