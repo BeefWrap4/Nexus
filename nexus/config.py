@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     DEFAULT_LLM_MODEL: str = Field(default="deepseek-chat", env="DEFAULT_LLM_MODEL")
     DEFAULT_LLM_PROVIDER: str = Field(default="deepseek", env="DEFAULT_LLM_PROVIDER")
 
+    # Provider 直连配置（当环境变量中有对应 API Key 时使用直连，否则走 LiteLLM Proxy）
+    # 格式: {provider: (base_url, env_key_for_api_key)}
+    PROVIDER_CONFIGS: dict[str, tuple[str, str]] = {
+        "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
+        "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+        "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
+        "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+        "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+    }
+
     # Fallback链：主模型 -> 备用模型列表
     # 示例: "gpt-4o,claude-sonnet-4,deepseek-chat"
     LLM_FALLBACK_CHAIN: list[str] = Field(default_factory=list)

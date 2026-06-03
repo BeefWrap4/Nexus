@@ -32,21 +32,13 @@ from nexus.services.crew import CrewRunService, CrewService
 def _create_llm_client(model_config: dict) -> LLMClient:
     """根据模型配置创建 LLMClient.
 
-    FIXME(P1): 将 provider_base_urls 移到 nexus/config.py 的 Settings 中，
-    支持通过环境变量覆盖 Provider 配置。
+    优先使用 Provider 直连（当环境变量中有对应 API Key 时），
+    否则降级到 LiteLLM Proxy。
     """
     provider = model_config.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
-    provider_base_urls = {
-        "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-        "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
-        "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
-        "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-        "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
-    }
-
-    if provider in provider_base_urls:
-        direct_url, env_key = provider_base_urls[provider]
+    if provider in settings.PROVIDER_CONFIGS:
+        direct_url, env_key = settings.PROVIDER_CONFIGS[provider]
         api_key = os.environ.get(env_key)
         if api_key:
             base_url = direct_url
