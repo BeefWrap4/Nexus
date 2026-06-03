@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
@@ -45,6 +45,8 @@ class AgentResponse(BaseModel):
     goal: str
     llm_config: dict
     created_at: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 def _to_response(agent) -> AgentResponse:

@@ -66,8 +66,7 @@ async def create_connection(
     """
     mcp_mgr = get_mcp_client_manager()
     # Ensure tool_registry is attached
-    if mcp_mgr._tool_registry is None:
-        mcp_mgr.attach_registry(get_tool_registry())
+    mcp_mgr.attach_registry(get_tool_registry())
 
     # Check if connection already exists
     if mcp_mgr.get_connection(data.name):
