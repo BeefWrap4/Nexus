@@ -60,8 +60,9 @@ class WorkerSettings:
     # 优雅关闭等待时间
     max_shutdown_time = 30
 
-    # Worker 启动/关闭钩子
-    async def on_startup(self, ctx: dict) -> None:
+    # Worker 启动/关闭钩子 (ARQ 0.26+ 要求 staticmethod 签名)
+    @staticmethod
+    async def on_startup(ctx: dict) -> None:
         """Worker 启动时初始化."""
         import structlog
 
@@ -69,11 +70,11 @@ class WorkerSettings:
         logger.info(
             "arq_worker_started",
             worker_id=ctx.get("worker_id", "unknown"),
-            max_jobs=self.max_jobs,
             redis=settings.REDIS_URL,
         )
 
-    async def on_job_retry(self, ctx: dict[str, Any]) -> None:
+    @staticmethod
+    async def on_job_retry(ctx: dict[str, Any]) -> None:
         """任务重试时钩子.
 
         当重试次数达到上限时，将任务记录到死信队列。
@@ -83,7 +84,8 @@ class WorkerSettings:
             return
 
         job_try = ctx.get("job_try", 0)
-        if job_try >= self.max_tries:
+        max_tries = ctx.get("max_tries", 3)
+        if job_try >= max_tries:
             exc = ctx.get("exception")
             if exc:
                 await record_dead_letter_job(
@@ -93,7 +95,8 @@ class WorkerSettings:
                     exc=exc,
                 )
 
-    async def on_shutdown(self, ctx: dict) -> None:
+    @staticmethod
+    async def on_shutdown(ctx: dict) -> None:
         """Worker 关闭时清理."""
         import structlog
 
