@@ -11,9 +11,11 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.config import settings
 from nexus.db.database import close_db, init_db
@@ -171,6 +173,69 @@ async def nexus_exception_handler(request: Request, exc: NexusException):
     return JSONResponse(
         status_code=400,
         content={"detail": exc.message, "code": exc.code},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """处理Pydantic请求参数校验异常.
+
+    返回结构化的422错误，包含详细的字段验证失败信息。
+    """
+    errors = []
+    for err in exc.errors():
+        errors.append({
+            "field": ".".join(str(loc) for loc in err.get("loc", [])),
+            "message": err.get("msg", ""),
+            "type": err.get("type", ""),
+        })
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": "VALIDATION_ERROR",
+            "message": "Request validation failed",
+            "errors": errors,
+        },
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    """处理SQLAlchemy数据库异常.
+
+    返回503 Service Unavailable，不暴露底层数据库错误详情。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.error("Database error: %s", exc, exc_info=True)
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "code": "DATABASE_ERROR",
+            "message": "Database service temporarily unavailable",
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局兜底异常处理器.
+
+    捕获所有未处理的异常，返回500错误但绝不暴露堆栈或内部实现细节。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": "INTERNAL_ERROR",
+            "message": "An internal server error occurred",
+        },
     )
 
 
