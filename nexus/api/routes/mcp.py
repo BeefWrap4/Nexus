@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from nexus.mcp.client import MCPServerConnection, get_mcp_client_manager
+from nexus.security.auth import get_current_user
 from nexus.tools.registry import get_tool_registry
 
 router = APIRouter()
@@ -55,7 +56,10 @@ class MCPConnectionList(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/connections", response_model=MCPServerResponse)
-async def create_connection(data: MCPServerCreate):
+async def create_connection(
+    data: MCPServerCreate,
+    current_user: dict = Depends(get_current_user),
+):
     """Register and connect to an MCP Server.
 
     Discovers tools automatically and registers them to the global ToolRegistry.
@@ -101,7 +105,7 @@ async def create_connection(data: MCPServerCreate):
 
 
 @router.get("/connections", response_model=MCPConnectionList)
-async def list_connections():
+async def list_connections(current_user: dict = Depends(get_current_user)):
     """List all active MCP Server connections."""
     mcp_mgr = get_mcp_client_manager()
     connections = mcp_mgr.list_connections()
@@ -109,7 +113,10 @@ async def list_connections():
 
 
 @router.get("/connections/{name}")
-async def get_connection(name: str):
+async def get_connection(
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
     """Get details of a specific MCP Server connection."""
     mcp_mgr = get_mcp_client_manager()
     conn = mcp_mgr.get_connection(name)
@@ -122,14 +129,16 @@ async def get_connection(name: str):
         "url": conn.conn.url,
         "command": conn.conn.command,
         "args": conn.conn.args,
-        "env": conn.conn.env,
         "connected": conn.connected,
         "tools": conn._tools,
     }
 
 
 @router.delete("/connections/{name}")
-async def disconnect_connection(name: str):
+async def disconnect_connection(
+    name: str,
+    current_user: dict = Depends(get_current_user),
+):
     """Disconnect from an MCP Server and unregister its tools."""
     mcp_mgr = get_mcp_client_manager()
     conn = mcp_mgr.get_connection(name)
@@ -141,7 +150,12 @@ async def disconnect_connection(name: str):
 
 
 @router.post("/connections/{name}/tools/{tool_name}")
-async def call_mcp_tool(name: str, tool_name: str, params: dict[str, Any] | None = None):
+async def call_mcp_tool(
+    name: str,
+    tool_name: str,
+    params: dict[str, Any] | None = None,
+    current_user: dict = Depends(get_current_user),
+):
     """Directly call a tool on an MCP Server (for testing/debugging).
 
     Note: Normally tools are called through ToolRegistry.execute()
