@@ -1,5 +1,3 @@
-version: "3.9"
-
 # =============================================================================
 # NEXUS - Enterprise Multi-Agent Orchestration Engine
 # Docker Compose 完整部署配置
