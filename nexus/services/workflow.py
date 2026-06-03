@@ -87,18 +87,29 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
         tenant_id: UUID,
         user_id: UUID | None = None,
     ) -> WorkflowVersion:
-        """创建新版本，自动递增版本号."""
+        """创建新版本，自动递增版本号.
+
+        使用 SELECT FOR UPDATE 锁定 workflow 行，防止并发下版本号冲突。
+        """
         workflow_id = data.get("workflow_id")
 
-        # 查询当前最大版本号
-        stmt = (
-            select(WorkflowVersion.version)
-            .where(WorkflowVersion.workflow_id == workflow_id)
-            .order_by(WorkflowVersion.version.desc())
-            .limit(1)
+        # 锁定 workflow 行，序列化该 workflow 的版本创建
+        from sqlalchemy import func
+
+        lock_stmt = (
+            select(Workflow)
+            .where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id)
+            .with_for_update()
         )
-        result = await session.execute(stmt)
-        max_version = result.scalar_one_or_none() or 0
+        await session.execute(lock_stmt)
+
+        # 查询当前最大版本号（在锁保护下安全）
+        max_stmt = (
+            select(func.coalesce(func.max(WorkflowVersion.version), 0))
+            .where(WorkflowVersion.workflow_id == workflow_id)
+        )
+        result = await session.execute(max_stmt)
+        max_version = result.scalar_one()
 
         db_data = dict(data)
         db_data["version"] = max_version + 1
@@ -110,7 +121,7 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
         await session.flush()
         await session.refresh(version)
 
-        # 更新工作流的current_version
+        # 更新工作流的 current_version
         stmt_wf = select(Workflow).where(
             Workflow.id == workflow_id,
             Workflow.tenant_id == tenant_id,
