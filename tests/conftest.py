@@ -12,7 +12,12 @@ import asyncio
 import os
 
 # 必须在导入 nexus 模块之前设置，否则 nexus.db.database 会基于默认 SQLite 创建 engine
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://nexus:nexus@postgres:5432/nexus_test"
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "sqlite+aiosqlite:///./.pytest_nexus.db",
+)
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ.setdefault("DEV_API_KEY", "test-api-key")
 from collections.abc import AsyncGenerator
 from datetime import timedelta
 from typing import Any
@@ -76,9 +81,6 @@ def event_loop():
 # ---------------------------------------------------------------------------
 # 测试数据库（PostgreSQL — Docker Compose 内）
 # ---------------------------------------------------------------------------
-
-TEST_DATABASE_URL = "postgresql+asyncpg://nexus:nexus@postgres:5432/nexus_test"
-
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:

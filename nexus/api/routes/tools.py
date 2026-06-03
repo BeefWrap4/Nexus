@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
@@ -16,22 +16,26 @@ tool_service = ToolService()
 
 
 class ToolCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     type: str = "http"  # http / sql / python / mcp
     config: dict = Field(default_factory=dict)
-    schema: dict = Field(default_factory=dict)
+    input_schema: dict = Field(default_factory=dict, alias="schema")
     auth_config: dict = Field(default_factory=dict)
 
 
 class ToolResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str
     name: str
     description: str
     type: str
     status: str
     created_at: str
-    schema: dict = Field(default_factory=dict)
+    input_schema: dict = Field(default_factory=dict, alias="schema")
     source: str = "db"  # db / registry
 
 
@@ -99,7 +103,7 @@ async def create_tool(
             "description": data.description,
             "type": data.type,
             "config": data.config,
-            "schema": data.schema,
+            "schema": data.input_schema,
             "auth_config": data.auth_config,
         },
         tenant_id=tenant_id,
@@ -134,7 +138,7 @@ async def update_tool(
     tool = await tool_service.update(
         db,
         tool_id,
-        data=data.model_dump(),
+        data=data.model_dump(by_alias=True),
         tenant_id=tenant_id,
     )
     if not tool:

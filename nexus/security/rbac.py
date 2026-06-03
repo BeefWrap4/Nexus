@@ -24,13 +24,15 @@ class RBACMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """处理请求，接入 PermissionEngine 进行权限验证."""
         # 跳过公开端点
-        PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/metrics"}
+        PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/metrics"}
         if request.url.path in PUBLIC_PATHS or request.url.path.startswith("/docs/"):
             return await call_next(request)
 
         # 获取用户信息
         user = getattr(request.state, "user", None)
         if not user:
+            if request.headers.get("Authorization") or request.headers.get("X-API-Key"):
+                return await call_next(request)
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Authentication required", "code": "UNAUTHORIZED"},

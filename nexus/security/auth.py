@@ -14,6 +14,7 @@ import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import UUID
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nexus.config import settings
 from nexus.db.database import get_db
 from nexus.exceptions import AuthenticationException
-from nexus.models import APIKey, User
+from nexus.models import APIKey, Tenant, User
 
 # 安全scheme
 security = HTTPBearer(auto_error=False)
@@ -220,9 +221,15 @@ async def get_current_user(
             and api_key == settings.DEV_API_KEY
             and settings.ENVIRONMENT == "development"
         ):
+            tenant_id = str(UUID(int=0))
+            result = await db.execute(select(Tenant).where(Tenant.slug == "default"))
+            tenant = result.scalar_one_or_none()
+            if tenant:
+                tenant_id = str(tenant.id)
+
             return {
                 "id": "dev-api-key-user",
-                "tenant_id": "default",
+                "tenant_id": tenant_id,
                 "role": "admin",
                 "auth_type": "api_key",
                 "permissions": ["*"],

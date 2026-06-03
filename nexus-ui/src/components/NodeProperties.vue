@@ -105,7 +105,7 @@
               <a-input
                 v-if="propDef.type === 'string'"
                 v-model:value="toolParamValues[propName]"
-                :placeholder="propDef.default ?? getPlaceholder(propName)"
+                :placeholder="propDef.default ?? getPlaceholder(String(propName))"
                 @change="emitToolParamsUpdate"
               />
 
@@ -139,7 +139,7 @@
               <a-input
                 v-else
                 v-model:value="toolParamValues[propName]"
-                :placeholder="getPlaceholder(propName)"
+                :placeholder="getPlaceholder(String(propName))"
                 @change="emitToolParamsUpdate"
               />
             </a-form-item>

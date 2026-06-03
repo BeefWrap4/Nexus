@@ -170,12 +170,14 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: ${DEBUG:-true}
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      DEV_API_KEY: ${DEV_API_KEY:-nexus_devkey_api_key_for_testing_and_docs}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # 数据库
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
       DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
 
       # Redis
       REDIS_URL: redis://redis:6379/0
@@ -257,6 +259,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      DATABASE_ECHO: ${DATABASE_ECHO:-false}
       REDIS_URL: redis://redis:6379/0
       LITELLM_PROXY_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-key}

@@ -61,7 +61,7 @@
           <template v-if="report">
             <div style="text-align: center; margin: 16px 0">
               <a-progress type="circle" :percent="report.score * 10" :width="80"
-                :format="p => `${report.score}/10`"
+                :format="() => `${report.score}/10`"
                 :stroke-color="{ '0%': '#ff4d4f', '50%': '#faad14', '100%': '#52c41a' }"/>
             </div>
 
@@ -228,7 +228,7 @@ async function fetchResult(runId: string) {
       report.value = parsed.summary
       findings.value = parsed.findings || []
     }
-  } catch (e) {
+  } catch {
     message.error('获取结果失败')
   }
 }
@@ -258,7 +258,7 @@ async function sendFollowUp(query: string) {
       } catch { /* ignore */ }
       followUpLoading.value = false
     }, 5000)
-  } catch (e: any) {
+  } catch {
     message.error('追问失败')
     followUpLoading.value = false
   }

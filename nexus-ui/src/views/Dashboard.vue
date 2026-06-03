@@ -132,7 +132,20 @@ import type { WorkflowRun } from '@/types'
 const router = useRouter()
 const loading = ref(false)
 
-const stats = ref({ workflows: 0, runs: 0, agents: 0, hitl: 0 })
+interface DashboardStats {
+  workflows: number
+  runs: number
+  agents: number
+  hitl: number
+  cache_hit_rate?: number
+  cache_hits?: number
+  cache_saved_tokens?: number
+  llm_calls?: number
+  status_distribution?: Record<string, number>
+  weekly_trend?: number[]
+}
+
+const stats = ref<DashboardStats>({ workflows: 0, runs: 0, agents: 0, hitl: 0 })
 const recentRuns = ref<WorkflowRun[]>([])
 
 const columns = [

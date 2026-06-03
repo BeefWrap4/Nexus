@@ -59,7 +59,7 @@
           <MiniMap />
 
           <!-- 自定义节点渲染 -->
-          <template #node-start="{ id, label, selected }">
+          <template #node-start="{ label, selected }">
             <div class="custom-node node-start" :class="{ selected }">
               <Handle type="source" :position="Position.Bottom" />
               <PlayCircleOutlined class="node-icon" />
@@ -67,7 +67,7 @@
             </div>
           </template>
 
-          <template #node-agent="{ id, label, data, selected }">
+          <template #node-agent="{ label, data, selected }">
             <div class="custom-node node-agent" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" />
@@ -77,7 +77,7 @@
             </div>
           </template>
 
-          <template #node-tool="{ id, label, selected }">
+          <template #node-tool="{ label, selected }">
             <div class="custom-node node-tool" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" />
@@ -86,7 +86,7 @@
             </div>
           </template>
 
-          <template #node-hitl="{ id, label, selected }">
+          <template #node-hitl="{ label, selected }">
             <div class="custom-node node-hitl" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" />
@@ -95,7 +95,7 @@
             </div>
           </template>
 
-          <template #node-condition="{ id, label, selected }">
+          <template #node-condition="{ label, selected }">
             <div class="custom-node node-condition" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" id="true" />
@@ -105,7 +105,7 @@
             </div>
           </template>
 
-          <template #node-parallel="{ id, label, selected }">
+          <template #node-parallel="{ label, selected }">
             <div class="custom-node node-parallel" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" />
@@ -114,7 +114,7 @@
             </div>
           </template>
 
-          <template #node-delay="{ id, label, selected }">
+          <template #node-delay="{ label, selected }">
             <div class="custom-node node-delay" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <Handle type="source" :position="Position.Bottom" />
@@ -123,7 +123,7 @@
             </div>
           </template>
 
-          <template #node-end="{ id, label, selected }">
+          <template #node-end="{ label, selected }">
             <div class="custom-node node-end" :class="{ selected }">
               <Handle type="target" :position="Position.Top" />
               <CheckCircleOutlined class="node-icon" />
@@ -222,7 +222,7 @@ const router = useRouter()
 const workflowId = computed(() => route.params.id as string)
 const isNew = computed(() => workflowId.value === 'new')
 
-const { addEdges, removeNodes, findNode, setNodes, setEdges, fitView, getNodes, getEdges } = useVueFlow()
+const { addEdges, removeNodes, setNodes, setEdges, fitView } = useVueFlow()
 
 const canvasRef = ref<HTMLElement | null>(null)
 
@@ -357,7 +357,8 @@ function onConnect(params: any) {
 }
 
 // ========== 节点选中/高亮 ==========
-function onNodeClick(_event: any, node: any) {
+function onNodeClick(event: { node: any }) {
+  const node = event.node
   const found = nodes.value.find((n: any) => n.id === node.id)
   if (!found) return
 
@@ -388,7 +389,7 @@ function onNodesChange(changes: any[]) {
   }
 }
 
-function onEdgesChange(changes: any[]) {
+function onEdgesChange(_changes: any[]) {
   // 可在此处理边的删除等变更
 }
 

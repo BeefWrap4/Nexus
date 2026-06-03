@@ -122,7 +122,7 @@ class WorkflowRun(Base):
         UUIDVariant, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     workflow_id = Column(
-        UUIDVariant, ForeignKey("workflows.id"), nullable=False
+        UUIDVariant, ForeignKey("workflows.id"), nullable=True
     )
     version = Column(Integer, nullable=False)
     status = Column(

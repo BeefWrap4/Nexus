@@ -17,6 +17,35 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    agent_columns = {column["name"] for column in inspector.get_columns("agents")}
+    if "llm_settings" not in agent_columns and "model_config" in agent_columns:
+        op.alter_column("agents", "model_config", new_column_name="llm_settings")
+        agent_columns.remove("model_config")
+        agent_columns.add("llm_settings")
+
+    if "llm_settings" not in agent_columns:
+        op.add_column(
+            "agents",
+            sa.Column(
+                "llm_settings",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="{}",
+            ),
+        )
+    elif bind.dialect.name == "postgresql":
+        op.execute(
+            sa.text(
+                "ALTER TABLE agents ALTER COLUMN llm_settings TYPE jsonb "
+                "USING llm_settings::jsonb"
+            )
+        )
+        op.execute(
+            sa.text("ALTER TABLE agents ALTER COLUMN llm_settings SET DEFAULT '{}'")
+        )
+
     # Insert default tenant
     op.execute(
         sa.text("""
@@ -72,7 +101,14 @@ def upgrade() -> None:
             now()
         FROM tenants t
         JOIN users u ON u.tenant_id = t.id
-        WHERE t.slug = 'default' AND u.name = 'admin';
+        WHERE t.slug = 'default'
+          AND u.name = 'admin'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM workflows w
+              WHERE w.tenant_id = t.id
+                AND w.name = 'Hello World Workflow'
+          );
         """)
     )
 
@@ -94,7 +130,13 @@ def upgrade() -> None:
             now(),
             now()
         FROM tenants t
-        WHERE t.slug = 'default';
+        WHERE t.slug = 'default'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM agents a
+              WHERE a.tenant_id = t.id
+                AND a.name = 'Default Agent'
+          );
         """)
     )
 
@@ -114,7 +156,13 @@ def upgrade() -> None:
             'active',
             now()
         FROM tenants t
-        WHERE t.slug = 'default';
+        WHERE t.slug = 'default'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tools tools_existing
+              WHERE tools_existing.tenant_id = t.id
+                AND tools_existing.name = 'HTTP Request'
+          );
         """)
     )
 

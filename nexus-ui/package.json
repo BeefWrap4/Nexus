@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build",
+    "build": "node -e \"import('node:child_process').then(({ spawnSync }) => { const env = { ...process.env, NODE_OPTIONS: '' }; for (const cmd of ['vue-tsc --noEmit', 'vite build']) { const result = spawnSync(cmd, { shell: true, stdio: 'inherit', env }); if (result.status) process.exit(result.status); } })\"",
     "preview": "vite preview",
     "lint": "eslint . --ext .vue,.ts,.tsx",
     "type-check": "vue-tsc --noEmit"

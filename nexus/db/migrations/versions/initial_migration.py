@@ -107,7 +107,7 @@ def upgrade() -> None:
         'wf_runs',
         sa.Column('id', sa.UUID(), primary_key=True, server_default=sa.text('gen_random_uuid()')),
         sa.Column('tenant_id', sa.UUID(), sa.ForeignKey('tenants.id', ondelete='CASCADE'), nullable=False),
-        sa.Column('workflow_id', sa.UUID(), sa.ForeignKey('workflows.id'), nullable=False),
+        sa.Column('workflow_id', sa.UUID(), sa.ForeignKey('workflows.id'), nullable=True),
         sa.Column('version', sa.Integer(), nullable=False),
         sa.Column('status', sa.String(30), nullable=False, server_default='pending'),
         sa.Column('trigger_type', sa.String(50), nullable=True),

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.models import Workflow, WorkflowVersion
@@ -93,8 +93,6 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
         workflow_id = data.get("workflow_id")
 
         # 锁定 workflow 行，序列化该 workflow 的版本创建
-        from sqlalchemy import func
-
         lock_stmt = (
             select(Workflow)
             .where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id)

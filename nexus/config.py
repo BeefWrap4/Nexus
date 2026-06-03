@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     )
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_ECHO: bool = Field(default=False, validation_alias="DATABASE_ECHO")
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
