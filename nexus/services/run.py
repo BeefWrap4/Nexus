@@ -381,3 +381,41 @@ class RunService(BaseService[WorkflowRun]):
         total = count_result.scalar() or 0
 
         return items, total
+
+    async def list_artifacts_by_run(
+        self,
+        session: AsyncSession,
+        run_id: UUID,
+        tenant_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """获取执行实例的所有输出产物.
+
+        Args:
+            session: 数据库会话
+            run_id: 执行实例ID
+            tenant_id: 租户ID
+
+        Returns:
+            产物列表（已序列化为 dict）
+        """
+        from sqlalchemy import select
+        from nexus.models.audit import Artifact
+
+        stmt = (
+            select(Artifact)
+            .where(Artifact.wf_run_id == run_id, Artifact.tenant_id == tenant_id)
+            .order_by(Artifact.created_at)
+        )
+        result = await session.execute(stmt)
+        artifacts = result.scalars().all()
+        return [
+            {
+                "id": str(a.id),
+                "name": a.name,
+                "type": a.type,
+                "mime_type": a.mime_type,
+                "size_bytes": a.size_bytes,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in artifacts
+        ]

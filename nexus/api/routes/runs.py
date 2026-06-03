@@ -141,28 +141,8 @@ async def get_run_artifacts(
     current_user: dict = Depends(get_current_user),
 ):
     """获取输出产物."""
-    from sqlalchemy import select
-    from nexus.models.audit import Artifact
-
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    stmt = (
-        select(Artifact)
-        .where(Artifact.wf_run_id == run_id, Artifact.tenant_id == tenant_id)
-        .order_by(Artifact.created_at)
-    )
-    result = await db.execute(stmt)
-    artifacts = result.scalars().all()
-    return [
-        {
-            "id": str(a.id),
-            "name": a.name,
-            "type": a.type,
-            "mime_type": a.mime_type,
-            "size_bytes": a.size_bytes,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-        }
-        for a in artifacts
-    ]
+    return await run_service.list_artifacts_by_run(db, run_id, tenant_id)
 
 
 # ---------------------------------------------------------------------------
