@@ -228,11 +228,21 @@ class LLMClient:
         # 透传额外参数
         payload.update(extra_params)
 
+        from nexus.observability.llm_tracer import trace_llm_call
+
         try:
-            response = await client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-            raw = response.json()
-            return self._parse_response(raw)
+            async with trace_llm_call(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                provider=provider,
+            ) as tracer:
+                response = await client.post("/chat/completions", json=payload)
+                response.raise_for_status()
+                raw = response.json()
+                result = self._parse_response(raw)
+                tracer.set_response(result)
+                return result
         except httpx.HTTPStatusError as e:
             raise LLMCallException(
                 f"HTTP {e.response.status_code}: {e.response.text}",

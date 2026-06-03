@@ -18,6 +18,7 @@ from nexus.agent.memory import AgentMemory
 from nexus.agent.trust_model import TrustModel
 from nexus.config import settings
 from nexus.exceptions import LLMCallException, MaxIterationsReachedException
+from nexus.observability.llm_tracer import set_trace_context
 
 
 @dataclass
@@ -108,6 +109,29 @@ class BaseAgent:
         tool_calls_log = []
         observations = []
 
+        # 设置 trace context（供 LLM 调用追踪）
+        trace_token = set_trace_context(
+            agent_id=self.config.name,
+            run_id=ctx.get("run_id"),
+            node_id=ctx.get("node_id"),
+            tenant_id=ctx.get("tenant_id"),
+            provider=self.config.provider,
+        )
+
+        try:
+            return await self._execute_loop(task, ctx, tool_calls_log, observations)
+        finally:
+            from nexus.observability.llm_tracer import TRACE_CONTEXT
+            TRACE_CONTEXT.reset(trace_token)
+
+    async def _execute_loop(
+        self,
+        task: Task,
+        ctx: dict[str, Any],
+        tool_calls_log: list[dict],
+        observations: list[dict],
+    ) -> AgentResult:
+        """Agent ReAct 执行循环（从 execute 抽离以支持 trace context 管理）."""
         # 1. 检索相关记忆
         memories = []
         if self.memory and self.config.memory_enabled:

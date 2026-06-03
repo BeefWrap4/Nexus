@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator, Optional
 from nexus.agent.llm_client import LLMClient, LLMResponse, LLMStreamChunk
 from nexus.config import settings
 from nexus.exceptions import LLMCallException
+from nexus.observability.llm_tracer import set_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,8 @@ class LLMService:
                     self.max_retries,
                     model,
                 )
+                # 将重试次数注入 trace context（供 tracer 读取）
+                set_trace_context(retry_count=attempt - 1)
                 response = await self.client.call(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -198,6 +201,9 @@ class LLMService:
         async with self._get_semaphore():
             for m in models_to_try:
                 try:
+                    # 记录 fallback 信息（如果使用了非主模型）
+                    if m != primary_model:
+                        set_trace_context(fallback_model=m)
                     return await self._call_with_retry(
                         model=m,
                         system_prompt=system_prompt,

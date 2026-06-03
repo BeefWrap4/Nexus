@@ -77,6 +77,29 @@ API_REQUEST_DURATION = Histogram(
     buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
 
+# ---------------------------------------------------------------------------
+# LLM 指标
+# ---------------------------------------------------------------------------
+
+LLM_CALLS_TOTAL = Counter(
+    "nexus_llm_calls_total",
+    "Total LLM calls",
+    ["model", "status", "tenant_id"],
+)
+
+LLM_LATENCY = Histogram(
+    "nexus_llm_latency_seconds",
+    "LLM call latency",
+    ["model"],
+    buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+)
+
+LLM_TOKENS_TOTAL = Counter(
+    "nexus_llm_tokens_total",
+    "Total tokens consumed",
+    ["model", "token_type"],
+)
+
 
 # ---------------------------------------------------------------------------
 # 便捷函数

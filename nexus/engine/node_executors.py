@@ -27,6 +27,7 @@ from nexus.engine.variable_pool import VariablePool
 from nexus.engine.enums import NodeStatus, RunStatus
 from nexus.engine.workflow_engine import Node, NodeExecutor, NodeResult
 from nexus.exceptions import AgentNotFoundException, ToolNotFoundException
+from nexus.observability.llm_tracer import set_trace_context
 from nexus.tools.registry import ToolRegistry
 
 
@@ -213,7 +214,12 @@ class AgentNodeExecutor(NodeExecutor):
         # 6. 创建 Task
         task = Task(description=task_description)
 
-        # 7. 执行 Agent
+        # 7. 执行 Agent（设置 trace context 供 LLM 调用追踪）
+        trace_token = set_trace_context(
+            run_id=run_id,
+            node_id=node.id,
+            tenant_id=state.env_vars.get("tenant_id"),
+        )
         try:
             result = await agent.execute(
                 task,
@@ -245,6 +251,9 @@ class AgentNodeExecutor(NodeExecutor):
                 status=NodeStatus.FAILED,
                 error={"type": type(e).__name__, "message": str(e)},
             )
+        finally:
+            from nexus.observability.llm_tracer import TRACE_CONTEXT
+            TRACE_CONTEXT.reset(trace_token)
 
     async def _get_agent(self, config: dict[str, Any]) -> BaseAgent | None:
         """获取Agent实例."""
