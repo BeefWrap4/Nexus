@@ -153,7 +153,7 @@ async def metrics():
 
 
 # 导入并注册路由（使用Service层）
-from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces
+from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts
 from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
@@ -163,6 +163,7 @@ app.include_router(runs.router, prefix="/api/v1/runs", tags=["runs"])
 app.include_router(hitl_tasks.router, prefix="/api/v1/hitl", tags=["hitl"])
 app.include_router(mcp.router, prefix="/api/v1/mcp", tags=["mcp"])
 app.include_router(traces.router, prefix="/api/v1/traces", tags=["traces"])
+app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）
 
 

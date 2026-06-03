@@ -19,6 +19,8 @@ from nexus.agent.trust_model import TrustModel
 from nexus.config import settings
 from nexus.exceptions import LLMCallException, MaxIterationsReachedException
 from nexus.observability.llm_tracer import set_trace_context
+from nexus.prompts.resolver import PromptResolver
+from uuid import UUID
 
 
 @dataclass
@@ -34,7 +36,9 @@ class AgentConfig:
     temperature: float = 0.7
     max_tokens: int = 4000
     max_iterations: int = 10
-    system_prompt: str = ""
+    system_prompt: str = ""  # 直接填写或 template_id 二选一
+    system_prompt_template_id: UUID | None = None  # 引用 PromptTemplate
+    template_variables: dict[str, Any] = field(default_factory=dict)  # 模板变量
     tools: list[str] = field(default_factory=list)
     memory_enabled: bool = True
 
@@ -132,6 +136,18 @@ class BaseAgent:
         observations: list[dict],
     ) -> AgentResult:
         """Agent ReAct 执行循环（从 execute 抽离以支持 trace context 管理）."""
+        # 0. 解析 PromptTemplate（如果配置了 template_id 或有 template_variables）
+        self._resolved_system_prompt = ""
+        if self.config.system_prompt_template_id or self.config.template_variables:
+            from nexus.prompts.engine import PromptEngine
+
+            engine = PromptEngine()
+            rendered = engine.render(
+                self.config.system_prompt,
+                self.config.template_variables,
+            )
+            self._resolved_system_prompt = rendered.content
+
         # 1. 检索相关记忆
         memories = []
         if self.memory and self.config.memory_enabled:
@@ -286,7 +302,7 @@ class BaseAgent:
         - goal: 目标
         - backstory: 背景/个性
 
-        增强：注入可用工具描述（兼容不支持 function calling 的模型 fallback）
+        增强：支持 PromptTemplate 解析（template_id 优先于 system_prompt 文本）
         """
         parts = []
 
@@ -298,9 +314,10 @@ class BaseAgent:
         if self.config.backstory:
             parts.append(f"Backstory: {self.config.backstory}")
 
-        # 自定义System Prompt
-        if self.config.system_prompt:
-            parts.append(self.config.system_prompt)
+        # System Prompt：优先使用已解析的模板，其次直填文本
+        system_prompt_text = getattr(self, "_resolved_system_prompt", None) or self.config.system_prompt
+        if system_prompt_text:
+            parts.append(system_prompt_text)
 
         # 可用工具描述（fallback text 格式，供不支持 function calling 的模型使用）
         if self.tool_registry:
