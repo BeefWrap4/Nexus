@@ -13,19 +13,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.agent.crew import Crew, CrewConfig, CrewMode
-from nexus.agent.base import AgentConfig, BaseAgent, Task
-from nexus.agent.llm_client import LLMClient
-from nexus.config import settings
 from nexus.db.database import get_db
 from nexus.models.crew import CrewRun
 from nexus.security.auth import get_current_user
 from nexus.services.crew import CrewService, CrewRunService
+from nexus.services.crew_execution import CrewExecutionService
 
 router = APIRouter()
 
 crew_service = CrewService()
 crew_run_service = CrewRunService()
+crew_execution_service = CrewExecutionService()
 
 
 # ---------------------------------------------------------------------------
@@ -113,35 +111,6 @@ def _to_run_response(run: CrewRun) -> CrewRunResponse:
         started_at=run.started_at.isoformat() if run.started_at else "",
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
     )
-
-
-def _create_llm_client(model_config: dict) -> LLMClient:
-    """根据模型配置创建 LLMClient."""
-    import os
-
-    provider = model_config.get("provider", settings.DEFAULT_LLM_PROVIDER)
-
-    provider_base_urls = {
-        "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-        "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
-        "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
-        "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-        "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
-    }
-
-    if provider in provider_base_urls:
-        direct_url, env_key = provider_base_urls[provider]
-        api_key = os.environ.get(env_key)
-        if api_key:
-            base_url = direct_url
-        else:
-            base_url = settings.LITELLM_PROXY_URL
-            api_key = settings.LITELLM_API_KEY
-    else:
-        base_url = settings.LITELLM_PROXY_URL
-        api_key = settings.LITELLM_API_KEY
-
-    return LLMClient(proxy_url=base_url, api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -273,140 +242,31 @@ async def run_crew(
     """触发 Crew 执行."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
 
-    # 1. 加载 Crew 配置
-    crew_data = await crew_service.get_with_agents(db, crew_id, tenant_id)
-    if not crew_data:
-        raise HTTPException(status_code=404, detail="Crew not found")
-
-    # 2. 创建执行记录
-    crew_run = await crew_run_service.create(
-        db, crew_id, req.task_description, tenant_id
-    )
-    await db.commit()
-
-    # 3. 构建 Agent 实例
-    from nexus.models.agent import Agent as AgentModel
-    from nexus.db.database import AsyncSessionLocal
-
-    workers = []
-    manager = None
-
-    async with AsyncSessionLocal() as agent_session:
-        from sqlalchemy import select
-
-        for agent_ref in crew_data["agents"]:
-            stmt = select(AgentModel).where(AgentModel.id == UUID(agent_ref["id"]))
-            result = await agent_session.execute(stmt)
-            agent_model = result.scalar_one_or_none()
-            if not agent_model:
-                continue
-
-            agent_config = AgentConfig(
-                name=agent_model.name,
-                role=agent_model.role or "",
-                goal=agent_model.goal or "",
-                backstory=agent_model.backstory or "",
-                system_prompt=agent_model.system_prompt or "",
-                provider=agent_model.model_config.get("provider", settings.DEFAULT_LLM_PROVIDER),
-                model=agent_model.model_config.get("model", settings.DEFAULT_LLM_MODEL),
-                temperature=agent_model.model_config.get("temperature", settings.DEFAULT_LLM_TEMPERATURE),
-                max_tokens=agent_model.model_config.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS),
-                max_iterations=agent_model.max_iterations or settings.DEFAULT_MAX_ITERATIONS,
-                tools=agent_model.tools or [],
-            )
-
-            llm_client = _create_llm_client(agent_model.model_config)
-            base_agent = BaseAgent(
-                config=agent_config,
-                llm_client=llm_client,
-            )
-
-            if agent_ref["role_in_crew"] == "manager":
-                manager = base_agent
-            else:
-                workers.append(base_agent)
-
-    if not manager and workers:
-        manager = workers[0]
-
-    if not manager:
-        raise HTTPException(status_code=400, detail="Crew has no valid agents")
-
-    # Sequential / Parallel 模式下 manager 也应参与执行
-    if crew_data["mode"] in ("sequential", "parallel") and manager not in workers:
-        workers.append(manager)
-
-    # 4. 构建 Crew 配置并执行
-    config = CrewConfig(
-        mode=CrewMode(crew_data["mode"]),
-        max_workers=crew_data.get("config", {}).get("max_workers", 5),
-        shared_context_enabled=crew_data.get("config", {}).get("shared_context_enabled", True),
-        auto_delegate=crew_data.get("config", {}).get("auto_delegate", True),
-    )
-
-    crew = Crew(
-        manager=manager,
-        workers=workers,
-        config=config,
-        crew_id=str(crew_id),
-    )
-
-    import asyncio
-    from time import perf_counter
-
-    start = perf_counter()
     try:
-        result = await crew.execute(
+        result = await crew_execution_service.run(
+            db,
+            crew_id=crew_id,
+            tenant_id=tenant_id,
             task_description=req.task_description,
             context=req.context,
         )
-        duration_ms = int((perf_counter() - start) * 1000)
+    except ValueError as exc:
+        error_msg = str(exc).lower()
+        if "not found" in error_msg:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Crew execution failed: {exc}"
+        ) from exc
 
-        # 更新执行记录
-        worker_results = [
-            {
-                "worker_name": w.worker_name,
-                "output": w.output,
-                "success": w.success,
-                "error": w.error,
-            }
-            for w in result.worker_results
-        ]
-
-        async with AsyncSessionLocal() as update_session:
-            await crew_run_service.update_status(
-                update_session,
-                crew_run.id,
-                status="completed",
-                output=result.output,
-                worker_results=worker_results,
-                duration_ms=duration_ms,
-            )
-            await update_session.commit()
-
-        return {
-            "run_id": str(crew_run.id),
-            "status": "completed",
-            "output": result.output,
-            "worker_results": worker_results,
-            "duration_ms": duration_ms,
-        }
-
-    except Exception as e:
-        duration_ms = int((perf_counter() - start) * 1000)
-
-        async with AsyncSessionLocal() as update_session:
-            await crew_run_service.update_status(
-                update_session,
-                crew_run.id,
-                status="failed",
-                output="",
-                worker_results=[{"error": str(e)}],
-                duration_ms=duration_ms,
-            )
-            await update_session.commit()
-
-        raise HTTPException(status_code=500, detail=f"Crew execution failed: {str(e)}")
+    return {
+        "run_id": result["run_id"],
+        "status": result["status"],
+        "output": result["output"],
+        "worker_results": result["worker_results"],
+        "duration_ms": result["duration_ms"],
+    }
 
 
 @router.get("/{crew_id}/runs")
