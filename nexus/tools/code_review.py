@@ -87,7 +87,7 @@ _SECURITY_PATTERNS: list[tuple[str, str, str, str]] = [
     ),
     (
         "sql_injection",
-        r'(?:execute|executemany|cursor\.execute)\s*\(\s*(?:f["\x27]|f"""|f\'\'\'|["\x27]\s*%\s*["\x27]|["\x27]\s*\+|["\x27]\.format\()',
+        r'(?:execute|executemany|cursor\.execute)\s*\([^)]*(?:\+|%|f["\x27]|f""")',
         "Potential SQL injection via string concatenation",
         "critical",
     ),

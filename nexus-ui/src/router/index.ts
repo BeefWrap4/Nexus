@@ -85,6 +85,11 @@ const routes = [
         component: () => import('@/views/EvalDashboard.vue'),
       },
       {
+        path: 'code-review',
+        name: 'CodeReview',
+        component: () => import('@/views/CodeReview.vue'),
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),

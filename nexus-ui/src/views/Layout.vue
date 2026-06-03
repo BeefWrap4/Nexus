@@ -55,6 +55,7 @@ import {
   LineChartOutlined,
   ExperimentOutlined,
   AuditOutlined,
+  CodeOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
@@ -76,6 +77,7 @@ const pageTitle = computed(() => {
     traces: 'LLM Trace',
     experiments: 'A/B 实验',
     evals: 'Eval 评估',
+    'code-review': '代码审查',
     analytics: '分析',
     settings: '设置',
   }
@@ -92,6 +94,7 @@ const menuItems = [
   { key: 'traces', icon: () => h(LineChartOutlined), label: 'Traces' },
   { key: 'experiments', icon: () => h(ExperimentOutlined), label: '实验' },
   { key: 'evals', icon: () => h(AuditOutlined), label: 'Eval' },
+  { key: 'code-review', icon: () => h(CodeOutlined), label: '代码审查' },
   { key: 'hitl', icon: () => h(QuestionCircleOutlined), label: '审批任务' },
   { key: 'analytics', icon: () => h(BarChartOutlined), label: '分析' },
   { key: 'settings', icon: () => h(SettingOutlined), label: '设置' },
