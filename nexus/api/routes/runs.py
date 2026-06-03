@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nexus.db.database import get_db
 from nexus.security.auth import get_current_user
 from nexus.services.run import RunService
+from nexus.services.node_run import NodeRunService
 
 router = APIRouter()
 
 run_service = RunService()
+node_run_service = NodeRunService()
 
 
 class RunResponse(BaseModel):
@@ -117,7 +119,7 @@ async def get_run_logs(
 ):
     """获取执行日志."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    items, _ = await run_service.list_node_runs(db, run_id)
+    items, _ = await node_run_service.list_by_run(db, run_id)
     return [
         {
             "id": str(n.id),

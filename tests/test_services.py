@@ -18,6 +18,7 @@ from nexus.models import Workflow, WorkflowRun, WorkflowVersion, NodeRun
 from nexus.services.base import BaseService
 from nexus.services.workflow import WorkflowService, WorkflowVersionService
 from nexus.services.run import RunService
+from nexus.services.node_run import NodeRunService
 from nexus.exceptions import WorkflowExecutionException, WorkflowNotFoundException
 
 
@@ -614,6 +615,7 @@ class TestRunService:
         """测试创建节点执行记录."""
         wf_service = WorkflowService()
         run_service = RunService()
+        node_service = NodeRunService()
         tenant_id = uuid4()
         user_id = uuid4()
 
@@ -630,7 +632,7 @@ class TestRunService:
         )
         await db_session.commit()
 
-        node_run = await run_service.create_node_run(
+        node_run = await node_service.create(
             db_session,
             wf_run_id=run.id,
             node_id="agent_1",
@@ -650,6 +652,7 @@ class TestRunService:
         """测试更新节点执行记录."""
         wf_service = WorkflowService()
         run_service = RunService()
+        node_service = NodeRunService()
         tenant_id = uuid4()
         user_id = uuid4()
 
@@ -666,12 +669,12 @@ class TestRunService:
         )
         await db_session.commit()
 
-        node_run = await run_service.create_node_run(
+        node_run = await node_service.create(
             db_session, run.id, "agent_1", "agent"
         )
         await db_session.commit()
 
-        updated = await run_service.update_node_run(
+        updated = await node_service.update(
             db_session,
             node_run_id=node_run.id,
             status="succeeded",
@@ -688,6 +691,7 @@ class TestRunService:
         """测试列出执行实例的所有节点记录."""
         wf_service = WorkflowService()
         run_service = RunService()
+        node_service = NodeRunService()
         tenant_id = uuid4()
         user_id = uuid4()
 
@@ -705,21 +709,21 @@ class TestRunService:
         await db_session.commit()
 
         for i in range(3):
-            await run_service.create_node_run(
+            await node_service.create(
                 db_session, run.id, f"node_{i}", "agent"
             )
         await db_session.commit()
 
-        items, total = await run_service.list_node_runs(db_session, run.id)
+        items, total = await node_service.list_by_run(db_session, run.id)
         assert total == 3
         assert len(items) == 3
 
     @pytest.mark.asyncio
     async def test_update_node_run_not_found(self, db_session: AsyncSession):
         """测试更新不存在的节点记录应返回None."""
-        run_service = RunService()
+        node_service = NodeRunService()
 
-        result = await run_service.update_node_run(
+        result = await node_service.update(
             db_session, uuid4(), "succeeded"
         )
         assert result is None

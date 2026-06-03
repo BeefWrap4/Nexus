@@ -17,28 +17,7 @@ from uuid import UUID
 
 from nexus.config import settings
 from nexus.db.database import get_db_session
-from nexus.engine.event_bus import EventBus
-from nexus.engine.workflow_engine import (
-    Edge,
-    Node,
-    NodeType,
-    WorkflowDefinition,
-    WorkflowEngine,
-)
-from nexus.engine.state_manager import StateManager
-from nexus.engine.checkpoint import CheckpointManager
-from nexus.engine.variable_pool import VariablePool
-from nexus.engine.router_engine import RouterEngine
-from nexus.engine.node_executors import (
-    StartNodeExecutor,
-    EndNodeExecutor,
-    AgentNodeExecutor,
-    CrewNodeExecutor,
-    HITLNodeExecutor,
-    ToolNodeExecutor,
-    ConditionNodeExecutor,
-)
-from nexus.engine.hitl_controller import HITLController
+from nexus.engine.workflow_engine import WorkflowEngine
 from nexus.engine.enums import RunStatus
 from nexus.services.run import RunService
 
@@ -84,18 +63,17 @@ async def execute_workflow_job(
             session,
             run_id=UUID(run_id),
             tenant_id=UUID(tenant_id),
-            status="running",
+            status=RunStatus.RUNNING.value,
         )
         if run is None:
             raise ValueError(f"Run {run_id} not found for tenant {tenant_id}")
 
-    # 2. 重建引擎组件（Worker 独立的内存状态，带 Redis 持久化）
-    event_bus = EventBus(redis_client=redis)
-    state_manager = StateManager(redis_client=redis)
-    checkpoint_mgr = CheckpointManager()
-    variable_pool = VariablePool()
-    router_engine = RouterEngine()
+    # 2. 引擎构建（使用公共 builder，消除与 runner.py 的重复）
+    from nexus.engine.builder import parse_workflow_definition, create_engine_components, register_base_executors
 
+    event_bus, state_manager, checkpoint_mgr, variable_pool, router_engine = create_engine_components(
+        redis_client=redis
+    )
     engine = WorkflowEngine(
         state_manager=state_manager,
         event_bus=event_bus,
@@ -104,12 +82,11 @@ async def execute_workflow_job(
         router_engine=router_engine,
     )
 
-    # 3. 注册节点执行器
+    # 3. 注册节点执行器（完整模式：包括 TOOL 和 CONDITION）
     from nexus.tools.registry import get_tool_registry
 
     tool_registry = get_tool_registry()
-    hitl_controller = HITLController(event_bus=event_bus)
-    # 创建 Agent Memory Backend（Redis 或内存）
+    # 创建 Agent Memory Backend
     from nexus.agent.memory_backend import create_memory_backend
 
     try:
@@ -120,55 +97,16 @@ async def execute_workflow_job(
     except Exception:
         memory_backend = create_memory_backend("memory")
 
-    engine.register_executor(NodeType.START, StartNodeExecutor())
-    engine.register_executor(NodeType.END, EndNodeExecutor())
-    engine.register_executor(
-        NodeType.AGENT,
-        AgentNodeExecutor(
-            tool_registry=tool_registry,
-            memory_backend=memory_backend,
-        ),
-    )
-    engine.register_executor(
-        NodeType.TOOL,
-        ToolNodeExecutor(tool_registry=tool_registry, event_bus=event_bus),
-    )
-    engine.register_executor(
-        NodeType.CONDITION,
-        ConditionNodeExecutor(router_engine=router_engine),
-    )
-    engine.register_executor(
-        NodeType.HITL,
-        HITLNodeExecutor(hitl_controller=hitl_controller, default_timeout=10),
-    )
-    engine.register_executor(
-        NodeType.CREW,
-        CrewNodeExecutor(tool_registry=tool_registry, event_bus=event_bus),
+    register_base_executors(
+        engine, event_bus,
+        tool_registry=tool_registry,
+        memory_backend=memory_backend,
+        redis_client=redis,
+        register_extra=True,
     )
 
-    # 4. 解析工作流定义
-    nodes = []
-    for n in workflow_config.get("nodes", []):
-        nodes.append(
-            Node(
-                id=n["id"],
-                type=NodeType(n.get("type", "agent")),
-                config=n.get("config", {}),
-                depends_on=n.get("depends_on", []),
-            )
-        )
-
-    edges = []
-    for e in workflow_config.get("edges", []):
-        edges.append(
-            Edge(
-                source=e["source"],
-                target=e["target"],
-                condition=e.get("condition"),
-            )
-        )
-
-    wf_def = WorkflowDefinition(nodes=nodes, edges=edges)
+    # 4. 解析工作流定义（使用 builder 的共享解析函数）
+    wf_def = parse_workflow_definition(workflow_config)
 
     # 5. 广播开始事件（通过 Redis Pub/Sub 传播到 API 进程）
     await event_bus.publish(
@@ -176,7 +114,7 @@ async def execute_workflow_job(
             "type": "run_started",
             "run_id": run_id,
             "tenant_id": tenant_id,
-            "workflow_nodes": [n.id for n in nodes],
+            "workflow_nodes": [n.id for n in wf_def.nodes],
         }
     )
 
@@ -237,7 +175,7 @@ async def execute_workflow_job(
         }
 
     except Exception as exc:
-        run_status = "failed"
+        run_status = RunStatus.FAILED.value
         error_info = {
             "type": type(exc).__name__,
             "message": str(exc),
@@ -267,7 +205,7 @@ async def execute_workflow_job(
                 session,
                 run_id=UUID(run_id),
                 tenant_id=UUID(tenant_id),
-                status="failed",
+                status=RunStatus.FAILED.value,
                 result={"error": error_info},
             )
 

@@ -10,11 +10,14 @@
 """
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from nexus.engine.state_manager import WorkflowState
 from nexus.exceptions import CheckpointNotFoundException
+
+logger = logging.getLogger(__name__)
 
 
 class Checkpoint:
@@ -106,7 +109,7 @@ class CheckpointManager:
                 session.add(record)
         except Exception:
             # DB 写入失败不阻塞检查点保存（内存缓存仍可用）
-            pass
+            logger.error("Failed to persist checkpoint to DB (run_id=%s)", run_id, exc_info=True)
 
         return checkpoint
 
@@ -167,7 +170,7 @@ class CheckpointManager:
                     elif record.state_data:
                         return WorkflowState.from_dict(record.state_data)
         except Exception:
-            pass
+            logger.error("Failed to load checkpoint from DB/S3 (run_id=%s)", run_id, exc_info=True)
 
         raise CheckpointNotFoundException(run_id)
 
@@ -209,6 +212,7 @@ class CheckpointManager:
                 self._checkpoints[run_id] = checkpoints
                 return checkpoints
         except Exception:
+            logger.error("Failed to list checkpoints from DB (run_id=%s)", run_id, exc_info=True)
             return []
 
     async def fork(
@@ -248,7 +252,7 @@ class CheckpointManager:
                 stmt = delete(CheckpointRecord).where(CheckpointRecord.run_id == run_id)
                 await session.execute(stmt)
         except Exception:
-            pass
+            logger.error("Failed to delete checkpoints from DB (run_id=%s)", run_id, exc_info=True)
 
     async def _load_checkpoint_state(self, checkpoint: Checkpoint) -> WorkflowState:
         """从检查点加载状态."""

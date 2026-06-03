@@ -24,10 +24,6 @@ class BaseService(Generic[ModelType]):
     def __init__(self, model_class: type[ModelType]):
         self.model_class = model_class
 
-    async def _get_session(self) -> AsyncSession:
-        """获取新的数据库会话（用于Service内部使用）."""
-        return AsyncSessionLocal()
-
     async def create(
         self,
         session: AsyncSession,

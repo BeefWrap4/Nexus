@@ -11,7 +11,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.models import Workflow, WorkflowVersion, WorkflowRun
+from nexus.models import Workflow, WorkflowVersion
 from nexus.services.base import BaseService
 
 
@@ -163,82 +163,10 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
         result = await session.execute(stmt)
         items = list(result.scalars().all())
 
-        count_stmt = select(WorkflowVersion).where(
+        count_stmt = select(func.count()).select_from(WorkflowVersion).where(
             WorkflowVersion.workflow_id == workflow_id
         )
         count_result = await session.execute(count_stmt)
-        total = len(count_result.scalars().all())
+        total = count_result.scalar() or 0
 
         return items, total
-
-
-class WorkflowRunService(BaseService[WorkflowRun]):
-    """工作流执行实例Service."""
-
-    def __init__(self):
-        super().__init__(WorkflowRun)
-
-    async def create(
-        self,
-        session: AsyncSession,
-        data: dict[str, Any],
-        tenant_id: UUID,
-        user_id: UUID | None = None,
-    ) -> WorkflowRun:
-        """创建工作流执行实例."""
-        db_data = dict(data)
-        db_data["tenant_id"] = tenant_id
-        db_data["status"] = db_data.get("status", "pending")
-
-        instance = WorkflowRun(**db_data)
-        session.add(instance)
-        await session.flush()
-        # NOTE: 不在这里 commit，事务边界由调用方控制
-        await session.refresh(instance)
-        return instance
-
-    async def list(
-        self,
-        session: AsyncSession,
-        tenant_id: UUID,
-        skip: int = 0,
-        limit: int = 100,
-        filters: dict[str, Any] | None = None,
-    ) -> tuple[list[WorkflowRun], int]:
-        """列表查询，支持按workflow_id过滤."""
-        return await super().list(session, tenant_id, skip, limit, filters)
-
-    async def update_status(
-        self,
-        session: AsyncSession,
-        run_id: UUID,
-        tenant_id: UUID,
-        status: str,
-        result: dict[str, Any] | None = None,
-    ) -> WorkflowRun | None:
-        """更新执行状态."""
-        run = await self.get(session, run_id, tenant_id)
-        if run is None:
-            return None
-
-        run.status = status
-        if result is not None:
-            run.result = result
-
-        session.add(run)
-        await session.flush()
-        # NOTE: 不在这里 commit，事务边界由调用方控制
-        await session.refresh(run)
-        return run
-
-    async def list_by_workflow(
-        self,
-        session: AsyncSession,
-        workflow_id: UUID,
-        tenant_id: UUID,
-        skip: int = 0,
-        limit: int = 100,
-    ) -> tuple[list[WorkflowRun], int]:
-        """获取工作流的所有执行实例."""
-        filters = {"workflow_id": workflow_id}
-        return await self.list(session, tenant_id, skip, limit, filters)

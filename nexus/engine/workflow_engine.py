@@ -266,8 +266,9 @@ class WorkflowEngine:
             raise
 
         finally:
-            await self.state_manager.update_status(run_id, state.status)
-            await self.checkpoint_mgr.save(run_id, state)
+            if state is not None:
+                await self.state_manager.update_status(run_id, state.status)
+                await self.checkpoint_mgr.save(run_id, state)
 
         return RunResult(
             run_id=run_id,

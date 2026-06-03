@@ -33,6 +33,8 @@ import logging
 import traceback
 from typing import Any, Awaitable, Callable
 
+from nexus.engine.enums import RunStatus
+
 logger = logging.getLogger(__name__)
 
 # 类型别名
@@ -223,7 +225,7 @@ async def _on_workflow_error(run_id: str, tenant_id: str, exc: Exception) -> Non
                 session,
                 run_id=UUID(run_id),
                 tenant_id=UUID(tenant_id),
-                status="failed",
+                status=RunStatus.FAILED.value,
                 result={"error": str(exc), "error_type": type(exc).__name__},
             )
             logger.info(

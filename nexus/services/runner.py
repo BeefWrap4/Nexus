@@ -6,41 +6,26 @@
 
 from __future__ import annotations
 
-import asyncio
-import traceback
-from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
 
-from nexus.agent.llm_client import LLMClient
-from nexus.engine.checkpoint import CheckpointManager
+from nexus.engine.builder import (
+    build_engine_and_executors,
+    create_engine_components,
+)
 from nexus.engine.enums import NodeType
-from nexus.engine.event_bus import EventBus
-from nexus.engine.node_executors import (
-    AgentNodeExecutor,
-    CrewNodeExecutor,
-    EndNodeExecutor,
-    HITLNodeExecutor,
-    StartNodeExecutor,
-)
-from nexus.engine.router_engine import RouterEngine
-from nexus.engine.state_manager import StateManager
-from nexus.engine.variable_pool import VariablePool
-from nexus.engine.workflow_engine import (
-    Edge,
-    Node,
-    WorkflowDefinition,
-    WorkflowEngine,
-)
-from nexus.engine.hitl_controller import HITLController
 
 
 class WorkflowRunner:
     """工作流运行时——从 Workflow JSON config 创建引擎并执行."""
 
-    def __init__(self, event_bus: EventBus | None = None):
-        self.event_bus = event_bus or EventBus()
-        self.state_manager = StateManager()
+    def __init__(self, event_bus=None, redis_client=None):
+        if event_bus:
+            self.event_bus = event_bus
+            self.state_manager = None  # 由 event_bus/redis_client 决定
+        else:
+            self.event_bus, self.state_manager, _, _, _ = create_engine_components(
+                redis_client=redis_client
+            )
 
     async def execute_from_config(
         self,
@@ -49,65 +34,32 @@ class WorkflowRunner:
         run_id: str,
     ):
         """从 workflow.config (JSON DAG) 构建引擎并执行."""
-        # 1. 解析节点
-        nodes = []
-        for n in config.get("nodes", []):
-            nodes.append(
-                Node(
-                    id=n["id"],
-                    type=NodeType(n.get("type", "agent")),
-                    config=n.get("config", {}),
-                    depends_on=n.get("depends_on", []),
-                )
-            )
-
-        # 2. 解析边
-        edges = []
-        for e in config.get("edges", []):
-            edges.append(
-                Edge(
-                    source=e["source"],
-                    target=e["target"],
-                    condition=e.get("condition"),
-                )
-            )
-
-        wf = WorkflowDefinition(nodes=nodes, edges=edges)
-
-        # 3. 创建引擎组件
-        cp = CheckpointManager()
-        vp = VariablePool()
-        re_ = RouterEngine()
-        engine = WorkflowEngine(self.state_manager, self.event_bus, cp, vp, re_)
-
-        # 4. 注册执行器（生产级：接入真实 LLM）
-        hitl_controller = HITLController(event_bus=self.event_bus)
-        engine.register_executor(NodeType.START, StartNodeExecutor())
-        engine.register_executor(NodeType.END, EndNodeExecutor())
-        engine.register_executor(NodeType.AGENT, AgentNodeExecutor())
-        engine.register_executor(
-            NodeType.HITL,
-            HITLNodeExecutor(hitl_controller=hitl_controller, default_timeout=10),
-        )
-        engine.register_executor(
-            NodeType.CREW,
-            CrewNodeExecutor(event_bus=self.event_bus),
+        # 1. 一站式构建
+        wf_def, engine, _ = build_engine_and_executors(
+            config=config,
+            redis_client=None,  # API 路径使用纯内存模式
+            register_extra=False,  # 不注册 TOOL/CONDITION 执行器
         )
 
-        # 5. 广播开始事件
+        # 2. 使用 WorkflowRunner 自身的 event_bus（保证事件发布一致）
+        engine.event_bus = self.event_bus
+        if self.state_manager:
+            engine.state_manager = self.state_manager
+
+        # 3. 广播开始事件
         await self.event_bus.publish(
             {
                 "type": "run_started",
                 "run_id": run_id,
-                "workflow_nodes": [n.id for n in nodes],
+                "workflow_nodes": [n.id for n in wf_def.nodes],
             }
         )
 
-        # 6. 执行
-        result = await engine.execute(wf, trigger_payload, run_id)
+        # 4. 执行
+        result = await engine.execute(wf_def, trigger_payload, run_id)
 
-        # 7. 广播结束事件
-        state = self.state_manager.get_state(run_id)
+        # 5. 广播结束事件
+        state = engine.state_manager.get_state(run_id)
         await self.event_bus.publish(
             {
                 "type": "run_completed",
@@ -121,7 +73,3 @@ class WorkflowRunner:
         )
 
         return result
-
-
-# 全局单例，用于 API 路由挂载
-runner = WorkflowRunner()

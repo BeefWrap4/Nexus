@@ -8,10 +8,13 @@
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from nexus.engine.enums import NodeStatus, RunStatus
 
@@ -152,7 +155,7 @@ class StateManager:
                 ex=86400,  # 24 小时过期
             )
         except Exception:
-            pass
+            logger.error("Failed to save state to Redis (run_id=%s)", run_id, exc_info=True)
 
     async def _load_from_redis(self, run_id: str) -> Optional[WorkflowState]:
         """从 Redis 加载状态."""
@@ -163,7 +166,7 @@ class StateManager:
             if data:
                 return WorkflowState.from_dict(json.loads(data))
         except Exception:
-            pass
+            logger.error("Failed to load state from Redis (run_id=%s)", run_id, exc_info=True)
         return None
 
     async def _delete_from_redis(self, run_id: str) -> None:
@@ -173,7 +176,7 @@ class StateManager:
         try:
             await self.redis.delete(self._state_key(run_id))
         except Exception:
-            pass
+            logger.error("Failed to delete state from Redis (run_id=%s)", run_id, exc_info=True)
 
     def create_state(
         self,

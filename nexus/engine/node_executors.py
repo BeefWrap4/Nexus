@@ -270,33 +270,6 @@ class AgentNodeExecutor(NodeExecutor):
             from nexus.observability.llm_tracer import TRACE_CONTEXT
             TRACE_CONTEXT.reset(trace_token)
 
-    async def _get_agent(self, config: dict[str, Any]) -> BaseAgent | None:
-        """获取Agent实例."""
-        agent_id = config.get("agent_id")
-
-        # 从缓存获取
-        if agent_id and agent_id in self._agent_cache:
-            return self._agent_cache[agent_id]
-
-        # 使用工厂创建
-        if agent_id and self.agent_factory:
-            agent = self.agent_factory(agent_id)
-            if agent:
-                self._agent_cache[agent_id] = agent
-            return agent
-
-        # 使用内联配置创建
-        if "agent_config" in config:
-            agent_config = AgentConfig(**config["agent_config"])
-            agent = BaseAgent(config=agent_config)
-            if agent_id:
-                self._agent_cache[agent_id] = agent
-            return agent
-
-        # 使用默认Agent
-        return self.default_agent
-
-
 class ToolNodeExecutor(NodeExecutor):
     """工具节点执行器.
 

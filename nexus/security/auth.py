@@ -218,7 +218,7 @@ async def get_current_user(
         if (
             settings.DEV_API_KEY
             and api_key == settings.DEV_API_KEY
-            and settings.ENVIRONMENT != "production"
+            and settings.ENVIRONMENT == "development"
         ):
             return {
                 "id": "dev-api-key-user",
