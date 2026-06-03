@@ -117,17 +117,22 @@ class AgentNodeExecutor(NodeExecutor):
 
     职责:
     1. 根据配置查找或创建Agent实例
-    2. 构建Task对象
-    3. 调用Agent.execute()并返回结果
+    2. 注入 ToolRegistry 和持久化 Memory
+    3. 构建Task对象
+    4. 调用Agent.execute()并返回结果
     """
 
     def __init__(
         self,
-        agent_factory: Any = None,  # Callable[[str], BaseAgent]
+        agent_factory: Any = None,
         default_agent: BaseAgent = None,
+        tool_registry: Any = None,
+        memory_backend: Any = None,
     ):
         self.agent_factory = agent_factory
         self.default_agent = default_agent
+        self.tool_registry = tool_registry
+        self.memory_backend = memory_backend
         self._agent_cache: dict[str, BaseAgent] = {}
 
     async def execute(
@@ -140,6 +145,7 @@ class AgentNodeExecutor(NodeExecutor):
         """执行Agent节点.
 
         从 node.config 读取配置参数，创建 Agent 实例并执行任务。
+        Phase 4 增强：注入 ToolRegistry 和 Redis-backed Memory。
         """
         config = node.config
 
@@ -148,14 +154,13 @@ class AgentNodeExecutor(NodeExecutor):
         agent_role = config.get("agent_role", "")
         agent_goal = config.get("agent_goal", "")
         task_description = config.get("task_description", config.get("task", ""))
+        tools_list = config.get("tools", [])  # 显式配置的工具白名单
 
         # 2. 从 node.config 读取模型配置
-        model = config.get("model", "deepseek-chat")
-        provider = config.get("provider", "deepseek")
+        model = config.get("model", settings.DEFAULT_LLM_MODEL)
+        provider = config.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
         # 3. 创建 LLMClient 实例
-        # 智能路由：优先检查是否有 provider 专用 key 可直连
-        # 避免依赖未运行的 LiteLLM Proxy
         provider_base_urls = {
             "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
             "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
@@ -164,7 +169,6 @@ class AgentNodeExecutor(NodeExecutor):
             "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
         }
 
-        # 优先用 provider 专用 key 直连
         if provider in provider_base_urls:
             direct_url, env_key = provider_base_urls[provider]
             api_key = os.environ.get(env_key)
@@ -179,24 +183,49 @@ class AgentNodeExecutor(NodeExecutor):
 
         llm_client = LLMClient(proxy_url=base_url, api_key=api_key)
 
-        # 4. 创建 AgentConfig + BaseAgent 实例
+        # 4. 创建持久化 AgentMemory（如果 backend 可用）
+        memory = None
+        if self.memory_backend and settings.AGENT_MEMORY_ENABLED:
+            from nexus.agent.memory import AgentMemory
+
+            memory = AgentMemory(
+                agent_id=f"{run_id}:{node.id}",
+                backend=self.memory_backend,
+            )
+
+        # 5. 创建 AgentConfig + BaseAgent 实例（注入完整依赖）
         agent_config = AgentConfig(
             name=agent_name,
             role=agent_role,
             goal=agent_goal,
             provider=provider,
             model=model,
+            tools=tools_list,
+            memory_enabled=settings.AGENT_MEMORY_ENABLED,
         )
-        agent = BaseAgent(config=agent_config, llm_client=llm_client)
+        agent = BaseAgent(
+            config=agent_config,
+            llm_client=llm_client,
+            memory=memory,
+            tool_registry=self.tool_registry,
+        )
 
-        # 5. 创建 Task
+        # 6. 创建 Task
         task = Task(description=task_description)
 
-        # 6. 执行 Agent
+        # 7. 执行 Agent
         try:
-            result = await agent.execute(task, context={"run_id": run_id, "node_id": node.id})
+            result = await agent.execute(
+                task,
+                context={
+                    "run_id": run_id,
+                    "node_id": node.id,
+                    "tenant_id": state.env_vars.get("tenant_id"),
+                    "user_id": state.env_vars.get("user_id"),
+                },
+            )
 
-            # 7. 将Agent输出写入run_vars（供下游节点引用）
+            # 8. 将Agent输出写入run_vars（供下游节点引用）
             output_key = config.get("output_key", node.id)
             state.run_vars[output_key] = result.output
 

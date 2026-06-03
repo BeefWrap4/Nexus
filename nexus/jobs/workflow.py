@@ -108,9 +108,26 @@ async def execute_workflow_job(
 
     tool_registry = get_tool_registry()
     hitl_controller = HITLController(event_bus=event_bus)
+    # 创建 Agent Memory Backend（Redis 或内存）
+    from nexus.agent.memory_backend import create_memory_backend
+
+    try:
+        if settings.AGENT_MEMORY_BACKEND == "redis" and redis:
+            memory_backend = create_memory_backend("redis", redis)
+        else:
+            memory_backend = create_memory_backend("memory")
+    except Exception:
+        memory_backend = create_memory_backend("memory")
+
     engine.register_executor(NodeType.START, StartNodeExecutor())
     engine.register_executor(NodeType.END, EndNodeExecutor())
-    engine.register_executor(NodeType.AGENT, AgentNodeExecutor())
+    engine.register_executor(
+        NodeType.AGENT,
+        AgentNodeExecutor(
+            tool_registry=tool_registry,
+            memory_backend=memory_backend,
+        ),
+    )
     engine.register_executor(
         NodeType.TOOL,
         ToolNodeExecutor(tool_registry=tool_registry, event_bus=event_bus),

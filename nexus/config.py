@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     DEFAULT_MAX_ITERATIONS: int = 10
     AGENT_MEMORY_ENABLED: bool = Field(default=True, env="AGENT_MEMORY_ENABLED")
+    AGENT_MEMORY_BACKEND: str = Field(
+        default="memory", env="AGENT_MEMORY_BACKEND"
+    )  # memory / redis
     AGENT_MEMORY_MAX_TOKENS: int = Field(
         default=8000, env="AGENT_MEMORY_MAX_TOKENS"
     )

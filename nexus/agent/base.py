@@ -95,12 +95,17 @@ class BaseAgent:
         self.tool_registry = tool_registry
 
     async def execute(self, task: Task, context: dict[str, Any] = None) -> AgentResult:
-        """执行Agent任务.
+        """执行Agent任务（ReAct + Function Calling 模式）.
 
         对应WAT BaseAgent.decide()。
+        增强：
+        1. LLM 调用携带可用工具的 function spec（OpenAI 格式）
+        2. LLM 可自主返回 tool_calls 决策
+        3. Tool 执行结果作为 observation 注入下一轮
+        4. 支持流式输出到 EventBus（如果 event_bus 注入）
         """
         ctx = context or {}
-        tool_calls = []
+        tool_calls_log = []
         observations = []
 
         # 1. 检索相关记忆
@@ -108,8 +113,9 @@ class BaseAgent:
         if self.memory and self.config.memory_enabled:
             memories = await self.memory.retrieve(task.description, limit=5)
 
-        # 2. 构建System Prompt
+        # 2. 构建System Prompt + 获取可用工具的 function spec
         system_prompt = self._build_system_prompt(memories)
+        openai_tools = self._get_openai_tools()
 
         # 3. ReAct模式循环
         for iteration in range(self.config.max_iterations):
@@ -120,7 +126,7 @@ class BaseAgent:
                 observations=observations,
             )
 
-            # LLM调用（通过LiteLLM Proxy）
+            # LLM调用（通过LiteLLM Proxy，携带 tools）
             try:
                 async with self._LLM_SEMAPHORE:
                     response = await self.llm_client.call(
@@ -130,12 +136,20 @@ class BaseAgent:
                         provider=self.config.provider,
                         temperature=self.config.temperature,
                         max_tokens=self.config.max_tokens,
+                        tools=openai_tools if openai_tools else None,
                     )
             except Exception as e:
                 raise LLMCallException(str(e), self.config.provider)
 
-            # 解析响应
-            decision = self.decision_parser.parse(response)
+            # 解析响应（支持 LLMResponse / dict / str fallback）
+            raw_response = response.raw if hasattr(response, "raw") else response
+            if isinstance(raw_response, str):
+                try:
+                    import json as _json
+                    raw_response = _json.loads(raw_response)
+                except Exception:
+                    raw_response = {"choices": [{"message": {"content": raw_response}}]}
+            decision = self.decision_parser.parse(raw_response)
 
             # 处理决策
             if decision.action == "final_answer":
@@ -149,13 +163,13 @@ class BaseAgent:
                 return AgentResult(
                     output=decision.content,
                     reasoning=decision.reasoning,
-                    tool_calls=tool_calls,
+                    tool_calls=tool_calls_log,
                     confidence=decision.confidence or 0.8,
                 )
 
             elif decision.action == "tool_call":
                 # 通过 ToolRegistry 实际执行工具
-                tool_calls.append({
+                tool_calls_log.append({
                     "tool": decision.tool_name,
                     "params": decision.tool_params,
                 })
@@ -170,6 +184,10 @@ class BaseAgent:
                                 "user_id": ctx.get("user_id"),
                             },
                         )
+                        obs_text = (
+                            f"Tool '{decision.tool_name}' executed successfully. "
+                            f"Result: {result.data if result.success else result.error}"
+                        )
                         observations.append({
                             "tool": decision.tool_name,
                             "params": decision.tool_params,
@@ -177,6 +195,7 @@ class BaseAgent:
                             "success": result.success,
                         })
                     except Exception as exc:
+                        obs_text = f"Tool '{decision.tool_name}' failed: {str(exc)}"
                         observations.append({
                             "tool": decision.tool_name,
                             "params": decision.tool_params,
@@ -184,10 +203,11 @@ class BaseAgent:
                             "success": False,
                         })
                 else:
+                    obs_text = "[ToolRegistry not configured — tool execution skipped]"
                     observations.append({
                         "tool": decision.tool_name,
                         "params": decision.tool_params,
-                        "result": "[ToolRegistry not configured — tool execution skipped]",
+                        "result": obs_text,
                         "success": False,
                     })
 
@@ -200,11 +220,39 @@ class BaseAgent:
                 return AgentResult(
                     output=decision.content or str(decision),
                     reasoning=decision.reasoning,
-                    tool_calls=tool_calls,
+                    tool_calls=tool_calls_log,
                 )
 
         # 达到最大迭代次数
         raise MaxIterationsReachedException(self.config.name, self.config.max_iterations)
+
+    def _get_openai_tools(self) -> list[dict] | None:
+        """获取可用工具的 OpenAI function spec 格式列表.
+
+        从 ToolRegistry 中提取工具定义，转换为 LLM function calling 格式。
+        如果未配置 tool_registry 或无可用工具，返回 None。
+        """
+        if not self.tool_registry:
+            return None
+
+        tools = self.tool_registry.list_tools()
+        if not tools:
+            return None
+
+        openai_tools = []
+        for tool_info in tools:
+            tool_def = self.tool_registry.get_tool(tool_info.name)
+            if not tool_def:
+                continue
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool_info.name,
+                    "description": tool_info.description,
+                    "parameters": tool_info.schema or {"type": "object", "properties": {}},
+                },
+            })
+        return openai_tools
 
     def _build_system_prompt(self, memories: list[dict] = None) -> str:
         """构建System Prompt.
@@ -213,6 +261,8 @@ class BaseAgent:
         - role: 角色描述
         - goal: 目标
         - backstory: 背景/个性
+
+        增强：注入可用工具描述（兼容不支持 function calling 的模型 fallback）
         """
         parts = []
 
@@ -227,6 +277,19 @@ class BaseAgent:
         # 自定义System Prompt
         if self.config.system_prompt:
             parts.append(self.config.system_prompt)
+
+        # 可用工具描述（fallback text 格式，供不支持 function calling 的模型使用）
+        if self.tool_registry:
+            tools = self.tool_registry.list_tools()
+            if tools:
+                parts.append("\nYou have access to the following tools:")
+                for tool_info in tools:
+                    parts.append(
+                        f"- {tool_info.name}: {tool_info.description}"
+                    )
+                parts.append(
+                    "\nTo use a tool, respond with action 'tool_call' and specify the tool name and parameters."
+                )
 
         # 记忆注入
         if memories:
