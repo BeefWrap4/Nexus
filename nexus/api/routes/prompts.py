@@ -286,3 +286,156 @@ async def diff_versions(
         version_b=version_b,
         diff="".join(diff),
     )
+
+
+# ---------------------------------------------------------------------------
+# A/B 实验管理
+# ---------------------------------------------------------------------------
+
+class ExperimentCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    variants: list[dict] = Field(..., description="[{name, version, traffic_percentage}]")
+
+
+class ExperimentOut(BaseModel):
+    id: UUID
+    name: str
+    template_id: UUID
+    status: str
+    variants: list[dict] | None = None
+    created_at: Any | None = None
+
+
+@router.post("/prompts/{prompt_id}/experiments", response_model=ExperimentOut)
+async def create_experiment(
+    prompt_id: UUID,
+    data: ExperimentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    """为 PromptTemplate 创建 A/B 实验."""
+    tenant_id = getattr(current_user, "tenant_id", None)
+    user_id = getattr(current_user, "id", None)
+
+    # 验证 template 存在
+    template_result = await db.execute(
+        select(PromptTemplate).where(PromptTemplate.id == str(prompt_id))
+    )
+    template = template_result.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail="Prompt template not found")
+
+    from nexus.models.experiment import PromptExperiment, PromptExperimentVariant
+
+    experiment = PromptExperiment(
+        tenant_id=tenant_id,
+        name=data.name,
+        template_id=template.id,
+        status="running",
+    )
+    db.add(experiment)
+    await db.flush()
+
+    # 创建变体
+    total_traffic = 0
+    for v in data.variants:
+        total_traffic += v.get("traffic_percentage", 0)
+        variant = PromptExperimentVariant(
+            experiment_id=experiment.id,
+            name=v["name"],
+            template_version=v["version"],
+            traffic_percentage=v["traffic_percentage"],
+        )
+        db.add(variant)
+
+    if total_traffic != 100:
+        raise HTTPException(status_code=400, detail=f"Traffic percentages must sum to 100, got {total_traffic}")
+
+    await db.commit()
+    await db.refresh(experiment)
+
+    # 加载 variants
+    var_result = await db.execute(
+        select(PromptExperimentVariant)
+        .where(PromptExperimentVariant.experiment_id == str(experiment.id))
+    )
+    experiment.variants = list(var_result.scalars().all())
+    return experiment
+
+
+@router.get("/prompts/{prompt_id}/experiments", response_model=list[ExperimentOut])
+async def list_experiments(
+    prompt_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    """列出 PromptTemplate 的所有实验."""
+    from nexus.models.experiment import PromptExperiment
+
+    result = await db.execute(
+        select(PromptExperiment)
+        .where(PromptExperiment.template_id == str(prompt_id))
+        .order_by(desc(PromptExperiment.created_at))
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/experiments/{exp_id}/pause")
+async def pause_experiment(
+    exp_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    """暂停实验."""
+    from nexus.models.experiment import PromptExperiment
+
+    result = await db.execute(
+        select(PromptExperiment).where(PromptExperiment.id == str(exp_id))
+    )
+    experiment = result.scalar_one_or_none()
+    if not experiment:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+
+    experiment.status = "paused"
+    await db.commit()
+    return {"id": exp_id, "status": "paused"}
+
+
+@router.get("/experiments/{exp_id}/results")
+async def get_experiment_results(
+    exp_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_user),
+):
+    """获取实验结果（各变体指标）."""
+    from nexus.models.experiment import PromptExperiment, PromptExperimentVariant
+
+    exp_result = await db.execute(
+        select(PromptExperiment).where(PromptExperiment.id == str(exp_id))
+    )
+    experiment = exp_result.scalar_one_or_none()
+    if not experiment:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+
+    var_result = await db.execute(
+        select(PromptExperimentVariant)
+        .where(PromptExperimentVariant.experiment_id == str(exp_id))
+    )
+    variants = var_result.scalars().all()
+
+    return {
+        "experiment_id": exp_id,
+        "name": experiment.name,
+        "status": experiment.status,
+        "variants": [
+            {
+                "name": v.name,
+                "version": v.template_version,
+                "traffic_percentage": v.traffic_percentage,
+                "total_calls": v.total_calls,
+                "avg_latency_ms": v.avg_latency_ms,
+                "avg_tokens": v.avg_tokens,
+            }
+            for v in variants
+        ],
+    }
