@@ -195,12 +195,25 @@ class AgentNodeExecutor(NodeExecutor):
             )
 
         # 5. 创建 AgentConfig + BaseAgent 实例（注入完整依赖）
+        # Phase 8: 支持从 node.config 传递 prompt template 和参数
+        template_id = config.get("system_prompt_template_id")
+        if template_id:
+            from uuid import UUID
+            if isinstance(template_id, str):
+                template_id = UUID(template_id)
+
         agent_config = AgentConfig(
             name=agent_name,
             role=agent_role,
             goal=agent_goal,
+            system_prompt=config.get("system_prompt", ""),
+            system_prompt_template_id=template_id,
+            template_variables=config.get("template_variables", {}),
             provider=provider,
             model=model,
+            temperature=config.get("temperature", settings.DEFAULT_LLM_TEMPERATURE),
+            max_tokens=config.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS),
+            max_iterations=config.get("max_iterations", settings.DEFAULT_MAX_ITERATIONS),
             tools=tools_list,
             memory_enabled=settings.AGENT_MEMORY_ENABLED,
         )

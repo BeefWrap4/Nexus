@@ -208,7 +208,7 @@ async def _persist_trace(trace_data: LLMTraceData) -> None:
         # Trace 写入失败不应影响主流程
         import logging
 
-        logging.getLogger(__name__).exception("Failed to persist LLM trace")
+        logging.getLogger(__name__).warning("Failed to persist LLM trace (DB unavailable)")
 
 
 def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:

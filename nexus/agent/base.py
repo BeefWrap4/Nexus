@@ -138,7 +138,20 @@ class BaseAgent:
         """Agent ReAct 执行循环（从 execute 抽离以支持 trace context 管理）."""
         # 0. 解析 PromptTemplate（如果配置了 template_id 或有 template_variables）
         self._resolved_system_prompt = ""
-        if self.config.system_prompt_template_id or self.config.template_variables:
+        if self.config.system_prompt_template_id:
+            # 优先从数据库加载模板内容 + 渲染变量
+            from nexus.db.database import AsyncSessionLocal
+            from nexus.prompts.resolver import PromptResolver
+
+            async with AsyncSessionLocal() as session:
+                resolver = PromptResolver(db_session=session)
+                resolved = await resolver.resolve(
+                    template_id=self.config.system_prompt_template_id,
+                    fallback_content=self.config.system_prompt,
+                    variables=self.config.template_variables,
+                )
+                self._resolved_system_prompt = resolved.content
+        elif self.config.template_variables:
             from nexus.prompts.engine import PromptEngine
 
             engine = PromptEngine()
