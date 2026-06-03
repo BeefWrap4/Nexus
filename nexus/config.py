@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(default=False, env="DEBUG")
 
     # 安全
-    SECRET_KEY: str = Field(default="change-me-in-production", env="SECRET_KEY")
+    # NOTE: 生产环境必须设置强 SECRET_KEY（≥32字符），启动时会校验
+    SECRET_KEY: str = Field(
+        default="nexus-dev-secret-not-for-production", env="SECRET_KEY"
+    )
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 

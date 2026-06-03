@@ -23,6 +23,37 @@ from nexus.jobs.pool import close_arq_pool, init_arq_pool
 from nexus.security.rbac import RBACMiddleware
 
 
+def _validate_production_security() -> None:
+    """生产环境启动前安全校验.
+
+    确保关键安全配置已正确设置，防止使用默认值部署到生产环境。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # SECRET_KEY 校验
+    dev_secrets = {
+        "nexus-dev-secret-not-for-production",
+        "change-me-in-production",
+        "your-secret-key-change-in-production",
+    }
+    if settings.SECRET_KEY in dev_secrets or len(settings.SECRET_KEY) < 32:
+        raise RuntimeError(
+            "SECURITY ERROR: SECRET_KEY is too weak or uses a default value. "
+            "Set a strong SECRET_KEY (≥32 chars) via environment variable."
+        )
+
+    # 数据库 URL 校验（禁止 SQLite）
+    if "sqlite" in settings.DATABASE_URL.lower():
+        raise RuntimeError(
+            "SECURITY ERROR: SQLite is not allowed in production. "
+            "Set DATABASE_URL to a PostgreSQL instance."
+        )
+
+    logger.info("Production security validation passed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理.
@@ -37,6 +68,11 @@ async def lifespan(app: FastAPI):
     """
     # 启动
     await init_db()
+
+    # 生产环境安全校验
+    if settings.ENVIRONMENT == "production":
+        _validate_production_security()
+
     await init_arq_pool()
 
     # Redis 客户端（用于 EventBus 和通用缓存）
