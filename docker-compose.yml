@@ -194,7 +194,7 @@ services:
       redis:
         condition: service_healthy
       litellm:
-        condition: service_healthy
+        condition: service_started
       minio:
         condition: service_healthy
     volumes:
@@ -241,13 +241,15 @@ services:
       ARQ_WORKER_CONCURRENCY: ${ARQ_WORKER_CONCURRENCY:-10}
       ARQ_JOB_TIMEOUT: ${ARQ_JOB_TIMEOUT:-3600}
       ARQ_MAX_RETRIES: ${ARQ_MAX_RETRIES:-3}
+    ports:
+      - "${WORKER_METRICS_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       litellm:
-        condition: service_healthy
+        condition: service_started
       api:
         condition: service_healthy
     volumes:
@@ -258,13 +260,32 @@ services:
       - nexus-network
 
   # ---------------------------------------------------------------------------
-  # NEXUS Frontend (Development)
+  # NEXUS Frontend (Production: nginx serve static files)
   # ---------------------------------------------------------------------------
   ui:
     build:
       context: ./nexus-ui
       dockerfile: Dockerfile
     container_name: nexus-ui
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT:-80}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    profiles:
+      - prod-ui
+
+  # ---------------------------------------------------------------------------
+  # NEXUS Frontend (Development: Vite hot-reload)
+  # ---------------------------------------------------------------------------
+  dev-ui:
+    build:
+      context: ./nexus-ui
+      dockerfile: Dockerfile.dev
+    container_name: nexus-dev-ui
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: http://localhost:${API_PORT:-8765}
@@ -280,6 +301,29 @@ services:
     command: npm run dev -- --host 0.0.0.0
     networks:
       - nexus-network
+    profiles:
+      - dev-ui
+
+  # ---------------------------------------------------------------------------
+  # Smart Cache (LLM Cache Engine) — RAG profile
+  # ---------------------------------------------------------------------------
+  smart-cache:
+    image: ghcr.io/beefwrap/llm-cache-engine:latest
+    container_name: nexus-smart-cache
+    restart: unless-stopped
+    ports:
+      - "${SMART_CACHE_PORT:-8777}:8777"
+    environment:
+      REDIS_URL: redis://redis:6379/1
+      EMBEDDING_MODEL: ${SMART_CACHE_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      API_KEY: ${SMART_CACHE_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    profiles:
+      - rag
 
   # ---------------------------------------------------------------------------
   # Prometheus (Metrics)

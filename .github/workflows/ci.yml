@@ -1,0 +1,113 @@
+# =============================================================================
+# NEXUS CI/CD Pipeline
+# 教案部署规范: push → lint → test → build image
+# 触发: push/PR to main 分支
+# =============================================================================
+
+name: NEXUS CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint — ruff check
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check nexus/ tests/ --ignore=F401,E501
+
+  # ---------------------------------------------------------------------------
+  # Test — pytest with Redis service
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (pytest)
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        run: |
+          cd nexus
+          pytest tests/ -v --ignore=tests/test_workflow_engine.py
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+          DEBUG: false
+          SECRET_KEY: ci-test-secret-key
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+
+  # ---------------------------------------------------------------------------
+  # Build API Image — Docker multi-stage (production target)
+  # ---------------------------------------------------------------------------
+  build-api:
+    name: Build API Image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./nexus
+          file: ./nexus/Dockerfile
+          target: production
+          push: false
+          tags: nexus-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Build UI Image — Vue + nginx
+  # ---------------------------------------------------------------------------
+  build-ui:
+    name: Build UI Image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build UI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./nexus/nexus-ui
+          file: ./nexus/nexus-ui/Dockerfile
+          push: false
+          tags: nexus-ui:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

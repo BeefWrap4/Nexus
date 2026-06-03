@@ -1,0 +1,15 @@
+# =============================================================================
+# NEXUS UI - Development Docker Build
+# Vite dev server with hot-reload, mount source as volume
+# =============================================================================
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies (leveraging Docker cache)
+COPY package.json package-lock.json ./
+RUN npm ci
+
+EXPOSE 5173
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

@@ -1,0 +1,12 @@
+# NEXUS Docker Build Ignore (Frontend)
+# Skip development artifacts from the Docker build context
+
+node_modules/
+dist/
+.cache/
+.git/
+.gitignore
+*.md
+.env
+.env.*
+*.log
