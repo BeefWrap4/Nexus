@@ -90,6 +90,11 @@ const routes = [
         component: () => import('@/views/CodeReview.vue'),
       },
       {
+        path: 'pr-bot',
+        name: 'PRBotConfig',
+        component: () => import('@/views/PRBotConfig.vue'),
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
