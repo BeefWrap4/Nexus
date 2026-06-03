@@ -27,7 +27,9 @@
 | **Eval评估** | 自动化评测引擎，支持规则/模型/人工多维度评估 |
 | **代码审查Agent** | 自动PR审查（安全、性能、风格），GitHub Webhook集成 |
 | **语义缓存** | Smart Cache 集成，RAG增强的LLM响应缓存 |
-| **多租户隔离** | PostgreSQL RLS，企业级SaaS架构 |
+| **多租户隔离** | PostgreSQL RLS + 端点级租户过滤，企业级SaaS架构 |
+| **API Key 认证** | HMAC-SHA256 数据库验证，支持过期/撤销/速率限制 |
+| **安全加固** | RBAC 权限引擎 + PII 检测预留 + 生产安全校验 |
 | **可观测性** | Prometheus + Grafana 指标监控，OpenTelemetry链路追踪 |
 
 ---
@@ -72,8 +74,8 @@
 └──────────────────────────┬──────────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────────┐
-│  编排引擎核心 (WorkflowEngine)                                    │
-│  DAG执行 + 状态机 + HITL + 事件总线 + 检查点                      │
+│  编排引擎核心 (WorkflowEngine + Builder)                           │
+│  DAG执行 + 状态机 + HITL + 事件总线 + 检查点 + 引擎工厂            │
 ├─────────────────────────────────────────────────────────────────┤
 │  Agent运行时                                                     │
 │  ├─ BaseAgent: ReAct循环 + LLM调用 + 决策解析 + 记忆系统          │
@@ -207,8 +209,10 @@ nexus/
 │   │   │   └── mcp.py          # MCP 连接管理
 │   ├── engine/                 # 核心编排引擎
 │   │   ├── workflow_engine.py  # DAG执行引擎
+│   │   ├── builder.py          # 引擎构建工厂（统一构建链路）
 │   │   ├── state_manager.py    # 状态管理
 │   │   ├── checkpoint.py       # 检查点/回滚
+│   │   ├── event_bus.py        # 事件总线 (Pub/Sub)
 │   │   ├── hitl_controller.py  # 人工审批
 │   │   └── node_executors.py   # 节点执行器
 │   ├── agent/                  # Agent运行时
@@ -217,12 +221,18 @@ nexus/
 │   │   ├── llm_client.py       # LLM客户端（LiteLLM代理）
 │   │   ├── memory.py           # 记忆系统
 │   │   └── decision_parser.py  # LLM响应解析
-│   ├── services/               # Service层 (CRUD)
+│   ├── services/               # Service层 (CRUD + 事务边界统一)
+│   │   ├── base.py              # 通用CRUD基类
+│   │   ├── run.py               # WorkflowRun + 触发执行
+│   │   ├── node_run.py          # NodeRun 节点执行记录
+│   │   └── ...                  # 各业务Service
 │   ├── models/                 # SQLAlchemy ORM模型
 │   ├── tools/                  # 工具注册中心 (MCP)
-│   ├── security/               # 认证/授权/租户隔离
+│   ├── security/               # 认证(JWT+API Key) / 授权(RBAC) / 租户隔离
+│   ├── utils/                  # 通用工具 (安全后台任务/死信队列)
 │   ├── prompts/                # Prompt模板引擎
 │   ├── observability/          # Trace追踪 + 指标
+│   ├── db/                     # 数据库迁移 (Alembic) + 种子数据
 │   └── eval/                   # Eval评测引擎
 ├── tests/                      # 测试套件（245 tests）
 │   ├── conftest.py             # pytest配置（PostgreSQL）
@@ -258,6 +268,14 @@ nexus/
 ---
 
 ## 架构说明
+
+### 后台任务安全
+
+所有 `asyncio.create_task` 调用使用 `utils/async_tasks.py` 中的 `safe_background_task()` 包装：
+
+- 自动捕获并记录后台异常（不再静默丢弃）
+- 工作流执行失败时自动更新 Run 状态为 `failed`
+- 死信队列 (`dead_letter_jobs`) 记录失败任务，支持事后审计和重试
 
 ### 编排引擎 (WorkflowEngine)
 
@@ -299,6 +317,15 @@ NEXUS的核心是**DAG工作流执行引擎**，设计灵感来源于：
 - **run_vars**: 运行级变量（节点间传递的中间结果）
 - **node_outputs**: 节点输出（执行完成后聚合）
 
+### 引擎构建 (Builder)
+
+引擎创建统一使用 `engine/builder.py` 工厂模块，消除 API 路径和 ARQ Worker 路径之间的重复代码：
+
+- `parse_workflow_definition()` — JSON config → DAG 解析
+- `create_engine_components()` — 工厂创建 EventBus/StateManager/CheckpointMgr 等
+- `register_base_executors()` — 注册执行器（支持基础/完整两种模式）
+- `build_engine_and_executors()` — 一站式便捷入口
+
 ### 状态生命周期
 
 ```
@@ -311,11 +338,21 @@ PENDING -> RUNNING -> [COMPLETED | FAILED | CANCELLED]
            RUNNING (恢复)
 ```
 
+所有状态值使用 `RunStatus` / `NodeStatus` 枚举（统一管理，避免魔法字符串）。
+
 ### 多租户隔离
 
 - 所有数据表包含 `tenant_id` 字段
-- Service层所有查询自动过滤租户
+- Service 层所有查询自动过滤租户
+- API 端点级租户校验（12 个端点已加固）
 - PostgreSQL Row-Level Security（可选启用）
+
+### 认证与授权
+
+- **JWT**: HS256 对称签名，access + refresh 双 Token
+- **API Key**: `nexus_<prefix>_<secret>` 格式，HMAC-SHA256(SECRET_KEY) 数据库验证，支持过期/撤销/权限
+- **RBAC**: 基于资源+操作的权限引擎，中间件自动拦截校验
+- **开发回退**: `DEV_API_KEY` 环境变量在 development 环境直接通过（方便测试/文档）
 
 ---
 
@@ -394,7 +431,8 @@ ws://localhost:8765/ws/v1/runs/{run_id}
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `ENVIRONMENT` | `development` | 运行环境 |
-| `SECRET_KEY` | `change-me-in-production` | JWT签名密钥 |
+| `SECRET_KEY` | `change-me-in-production` | JWT签名密钥 + API Key HMAC密钥 |
+| `DEV_API_KEY` | — | 开发环境 API Key 回退（仅 development 生效） |
 | `DATABASE_URL` | `postgresql+asyncpg://nexus:nexus@localhost:5432/nexus` | 数据库连接 |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis连接 |
 
