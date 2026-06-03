@@ -9,16 +9,17 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
-from nexus.models.llm_trace import LLMCallTrace
 from nexus.security.auth import get_current_user
+from nexus.services.trace import TraceService
 
 router = APIRouter()
+
+trace_service = TraceService()
 
 
 # ---------------------------------------------------------------------------
@@ -85,32 +86,17 @@ async def list_traces(
     current_user: Any = Depends(get_current_user),
 ):
     """列出 LLM 调用追踪记录."""
-    stmt = select(LLMCallTrace).order_by(desc(LLMCallTrace.created_at))
-
-    # 按 tenant_id 过滤（多租户安全）
     tenant_id = getattr(current_user, "tenant_id", None)
-    if tenant_id:
-        stmt = stmt.where(LLMCallTrace.tenant_id == str(tenant_id))
-
-    if run_id:
-        stmt = stmt.where(LLMCallTrace.run_id == str(run_id))
-    if agent_id:
-        stmt = stmt.where(LLMCallTrace.agent_id == agent_id)
-    if model:
-        stmt = stmt.where(LLMCallTrace.model == model)
-    if experiment_id:
-        stmt = stmt.where(LLMCallTrace.experiment_id == str(experiment_id))
-
-    # 计数
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar() or 0
-
-    # 分页
-    stmt = stmt.limit(limit).offset(offset)
-    result = await db.execute(stmt)
-    items = result.scalars().all()
-
+    items, total = await trace_service.list_traces(
+        db,
+        tenant_id=tenant_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        model=model,
+        experiment_id=experiment_id,
+        skip=offset,
+        limit=limit,
+    )
     return TraceListResponse(total=total, items=items)
 
 
@@ -121,13 +107,8 @@ async def get_trace(
     current_user: Any = Depends(get_current_user),
 ):
     """获取单个 Trace 详情（含完整 prompt/response）."""
-    result = await db.execute(
-        select(LLMCallTrace).where(LLMCallTrace.id == str(trace_id))
-    )
-    trace = result.scalar_one_or_none()
+    trace = await trace_service.get_trace(db, trace_id)
     if not trace:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail="Trace not found")
     return trace
 
@@ -140,43 +121,21 @@ async def get_trace_summary(
     current_user: Any = Depends(get_current_user),
 ):
     """按 model 聚合的统计：调用次数、平均耗时、平均 token."""
-    from sqlalchemy import cast, Float
-
-    stmt = (
-        select(
-            LLMCallTrace.model,
-            func.count().label("total_calls"),
-            func.avg(cast(LLMCallTrace.latency_ms, Float)).label("avg_latency_ms"),
-            func.avg(cast(LLMCallTrace.prompt_tokens, Float)).label("avg_prompt_tokens"),
-            func.avg(cast(LLMCallTrace.completion_tokens, Float)).label(
-                "avg_completion_tokens"
-            ),
-            func.sum(LLMCallTrace.total_tokens).label("total_tokens"),
-        )
-        .group_by(LLMCallTrace.model)
-        .order_by(desc("total_calls"))
-    )
-
     tenant_id = getattr(current_user, "tenant_id", None)
-    if tenant_id:
-        stmt = stmt.where(LLMCallTrace.tenant_id == str(tenant_id))
-
-    if start_date:
-        stmt = stmt.where(LLMCallTrace.created_at >= start_date)
-    if end_date:
-        stmt = stmt.where(LLMCallTrace.created_at <= end_date)
-
-    result = await db.execute(stmt)
-    rows = result.all()
-
+    rows = await trace_service.get_summary(
+        db,
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return [
         TraceSummary(
-            model=row.model,
-            total_calls=row.total_calls,
-            avg_latency_ms=round(row.avg_latency_ms or 0, 2),
-            avg_prompt_tokens=round(row.avg_prompt_tokens or 0, 2),
-            avg_completion_tokens=round(row.avg_completion_tokens or 0, 2),
-            total_tokens=row.total_tokens or 0,
+            model=row["model"],
+            total_calls=row["total_calls"],
+            avg_latency_ms=row["avg_latency_ms"],
+            avg_prompt_tokens=row["avg_prompt_tokens"],
+            avg_completion_tokens=row["avg_completion_tokens"],
+            total_tokens=row["total_tokens"],
         )
         for row in rows
     ]
