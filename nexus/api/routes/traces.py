@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +43,7 @@ class LLMTraceOut(BaseModel):
     cache_hit: bool | None = None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LLMTraceDetail(LLMTraceOut):

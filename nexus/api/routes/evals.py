@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +43,7 @@ class EvalRunOut(BaseModel):
     results: dict[str, Any] | None = None
     created_at: Any | None = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------

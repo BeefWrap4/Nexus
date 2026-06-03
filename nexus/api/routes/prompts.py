@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +51,7 @@ class PromptTemplateOut(BaseModel):
     current_version: int
     created_at: Any
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PromptTemplateVersionOut(BaseModel):
@@ -63,7 +63,7 @@ class PromptTemplateVersionOut(BaseModel):
     change_notes: str | None = None
     created_at: Any
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PromptDiffOut(BaseModel):
