@@ -10,16 +10,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.agent.base import AgentConfig
 from nexus.db.database import get_db
 from nexus.eval.runner import EvalRunner
-from nexus.models.eval import EvalRun
 from nexus.security.auth import get_current_user
+from nexus.services.eval import EvalService
 
 router = APIRouter()
+
+eval_service = EvalService()
 
 
 # ---------------------------------------------------------------------------
@@ -58,18 +58,13 @@ async def create_eval_run(
 ):
     """创建评估运行."""
     tenant_id = getattr(current_user, "tenant_id", None)
-
-    eval_run = EvalRun(
-        tenant_id=tenant_id,
+    return await eval_service.create(
+        db,
         name=data.name,
         eval_type=data.eval_type,
         dataset=data.dataset,
-        status="pending",
+        tenant_id=tenant_id,
     )
-    db.add(eval_run)
-    await db.commit()  # TODO: extract to EvalService
-    await db.refresh(eval_run)
-    return eval_run
 
 
 @router.get("/evals", response_model=list[EvalRunOut])
@@ -79,11 +74,7 @@ async def list_eval_runs(
 ):
     """列出评估运行."""
     tenant_id = getattr(current_user, "tenant_id", None)
-    stmt = select(EvalRun).order_by(desc(EvalRun.created_at))
-    if tenant_id:
-        stmt = stmt.where(EvalRun.tenant_id == tenant_id)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    return await eval_service.list(db, tenant_id=tenant_id)
 
 
 @router.get("/evals/{eval_id}", response_model=EvalRunOut)
@@ -93,10 +84,7 @@ async def get_eval_run(
     current_user: Any = Depends(get_current_user),
 ):
     """获取评估运行详情（含结果）."""
-    result = await db.execute(
-        select(EvalRun).where(EvalRun.id == str(eval_id))
-    )
-    eval_run = result.scalar_one_or_none()
+    eval_run = await eval_service.get(db, eval_id)
     if not eval_run:
         raise HTTPException(status_code=404, detail="Eval run not found")
     return eval_run
@@ -110,10 +98,7 @@ async def execute_eval(
     current_user: Any = Depends(get_current_user),
 ):
     """触发评估执行（后台异步执行）."""
-    result = await db.execute(
-        select(EvalRun).where(EvalRun.id == str(eval_id))
-    )
-    eval_run = result.scalar_one_or_none()
+    eval_run = await eval_service.get(db, eval_id)
     if not eval_run:
         raise HTTPException(status_code=404, detail="Eval run not found")
 
@@ -144,13 +129,7 @@ async def delete_eval_run(
     current_user: Any = Depends(get_current_user),
 ):
     """删除评估运行."""
-    result = await db.execute(
-        select(EvalRun).where(EvalRun.id == str(eval_id))
-    )
-    eval_run = result.scalar_one_or_none()
-    if not eval_run:
+    ok = await eval_service.delete(db, eval_id)
+    if not ok:
         raise HTTPException(status_code=404, detail="Eval run not found")
-
-    await db.delete(eval_run)
-
     return {"id": eval_id, "deleted": True}
