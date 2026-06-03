@@ -227,6 +227,7 @@ services:
         condition: service_healthy
     volumes:
       - ./nexus:/app/nexus:ro
+      - ./tests:/app/tests:ro
       - nexus-logs:/app/logs
       - nexus-data:/app/data
     healthcheck:

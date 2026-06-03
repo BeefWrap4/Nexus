@@ -2,13 +2,17 @@
 
 提供:
 - 异步事件循环支持
-- 内存数据库会话（SQLite）
+- PostgreSQL 测试数据库会话（Docker Compose）
 - Mock引擎组件
 - FastAPI TestClient
 - JWT Token生成
 """
 
 import asyncio
+import os
+
+# 必须在导入 nexus 模块之前设置，否则 nexus.db.database 会基于默认 SQLite 创建 engine
+os.environ["DATABASE_URL"] = "postgresql+asyncpg://nexus:nexus@postgres:5432/nexus_test"
 from collections.abc import AsyncGenerator
 from datetime import timedelta
 from typing import Any
@@ -70,17 +74,17 @@ def event_loop():
 
 
 # ---------------------------------------------------------------------------
-# 内存数据库（SQLite async）
+# 测试数据库（PostgreSQL — Docker Compose 内）
 # ---------------------------------------------------------------------------
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DATABASE_URL = "postgresql+asyncpg://nexus:nexus@postgres:5432/nexus_test"
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """提供函数级别的内存数据库会话.
+    """提供函数级别的 PostgreSQL 测试数据库会话.
 
-    每次测试独立数据库，自动回滚。
+    每次测试前重建所有表，测试后回滚，确保隔离。
     """
     engine = create_async_engine(
         TEST_DATABASE_URL,
@@ -91,11 +95,18 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
     )
 
-    # 创建所有表
+    # 清理并重建所有表
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async with async_session() as session:
+        # PostgreSQL 下禁用外键检查（兼容原先 SQLite 无 FK 约束的测试写法）
+        from sqlalchemy import text
+
+        if "postgresql" in TEST_DATABASE_URL:
+            await session.execute(text("SET session_replication_role = 'replica'"))
+            await session.commit()
         yield session
         await session.rollback()
 
