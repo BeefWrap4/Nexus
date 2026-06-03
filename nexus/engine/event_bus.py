@@ -8,11 +8,15 @@
 
 import asyncio
 import json
+import logging
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from nexus.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,8 +72,8 @@ class EventBus:
                     json.dumps(event),
                 )
             except Exception:
-                # Redis 不可用时不阻塞事件流
-                pass
+                # Redis 不可用时不阻塞事件流，但记录日志
+                logger.warning("Redis event publish failed (Redis unavailable)")
 
         # 3. 本地广播（WebSocket推送等）
         await self._broadcast_local(event)
@@ -91,8 +95,13 @@ class EventBus:
                 else:
                     handler(event)
             except Exception:
-                # 事件处理失败不应影响其他订阅者
-                pass
+                # 事件处理失败不应影响其他订阅者，但需要记录日志以便排查
+                logger.warning(
+                    "Event handler failed for topic '%s':\n%s",
+                    topic,
+                    traceback.format_exc(),
+                    extra={"event_type": event.get("type"), "topic": topic},
+                )
 
     def subscribe(
         self,

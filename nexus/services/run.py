@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import traceback
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -29,12 +27,14 @@ async def _execute_in_background(
     trigger_payload: dict[str, Any],
     runner,
 ):
-    """后台执行工作流（ARQ 降级路径）."""
-    try:
-        result = await runner.execute_from_config(config, trigger_payload, run_id)
-        print(f"[Runner] run_id={run_id} completed: {result.status.value}")
-    except Exception:
-        print(f"[Runner] run_id={run_id} failed:\n{traceback.format_exc()}")
+    """后台执行工作流（ARQ 降级路径）.
+
+    异常由调用方的 safe_background_task / safe_workflow_execution 捕获和处理，
+    本函数只做纯粹的执行逻辑，不负责状态管理。
+    """
+    result = await runner.execute_from_config(config, trigger_payload, run_id)
+    # result 的详细状态由 runner 内部通过数据库更新
+    return result
 
 
 class RunService(BaseService[WorkflowRun]):
@@ -144,13 +144,17 @@ class RunService(BaseService[WorkflowRun]):
         elif workflow and workflow.config:
             # 降级：本地异步执行（ARQ 未初始化时）
             from nexus.services.runner import runner as _runner
-            asyncio.create_task(
+            from nexus.utils.async_tasks import safe_workflow_execution
+
+            safe_workflow_execution(
                 _execute_in_background(
                     run_id=str(run.id),
                     config=workflow.config,
                     trigger_payload=trigger_payload or {},
                     runner=_runner,
-                )
+                ),
+                run_id=str(run.id),
+                tenant_id=str(tenant_id),
             )
 
         return run
