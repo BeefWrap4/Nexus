@@ -128,6 +128,13 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # MCP (Model Context Protocol)
+    # ------------------------------------------------------------------
+    MCP_SERVER_ENABLED: bool = Field(default=False, env="MCP_SERVER_ENABLED")
+    MCP_SERVER_PORT: int = Field(default=8766, env="MCP_SERVER_PORT")
+    MCP_SERVER_HOST: str = Field(default="0.0.0.0", env="MCP_SERVER_HOST")
+
+    # ------------------------------------------------------------------
     # 可观测性
     # ------------------------------------------------------------------
     ENABLE_PROMETHEUS: bool = True

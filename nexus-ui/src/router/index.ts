@@ -45,6 +45,11 @@ const routes = [
         component: () => import('@/views/Tools.vue'),
       },
       {
+        path: 'mcp',
+        name: 'MCPManager',
+        component: () => import('@/views/MCPManager.vue'),
+      },
+      {
         path: 'runs/:id',
         name: 'RunMonitor',
         component: () => import('@/views/RunMonitor.vue'),

@@ -309,17 +309,36 @@ class ToolRegistry:
     async def _execute_mcp(
         self, tool: Tool, params: dict[str, Any], context: dict[str, Any]
     ) -> ToolResult:
-        """执行MCP工具."""
-        # MCP Server调用
-        config = tool.config
-        server_url = config.get("server_url", "")
+        """执行MCP工具（通过MCPClientManager）.
 
-        # 简化版：返回描述
-        # 生产环境应通过MCP SDK调用
-        return ToolResult(
-            success=True,
-            data={"server": server_url, "params": params, "description": "MCP call placeholder"},
-        )
+        Phase 5: 从 placeholder 落地为实际 MCP SDK 调用。
+        """
+        from nexus.mcp.client import get_mcp_client_manager
+
+        config = tool.config
+        conn_name = config.get("mcp_server", "")
+        mcp_tool_name = config.get("mcp_tool_name", "")
+
+        if not conn_name or not mcp_tool_name:
+            return ToolResult(
+                success=False,
+                error=f"Invalid MCP tool config: missing 'mcp_server' or 'mcp_tool_name'",
+            )
+
+        try:
+            mcp_mgr = get_mcp_client_manager()
+            result = await mcp_mgr.call_tool(conn_name, mcp_tool_name, params)
+            return ToolResult(
+                success=not result.get("isError", False),
+                data=result.get("content", result),
+                metadata={"mcp_server": conn_name, "mcp_tool": mcp_tool_name},
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                error=f"MCP tool call failed: {str(e)}",
+                metadata={"mcp_server": conn_name, "mcp_tool": mcp_tool_name},
+            )
 
 
 # ---------------------------------------------------------------------------

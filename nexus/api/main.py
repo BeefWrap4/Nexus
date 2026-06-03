@@ -62,9 +62,37 @@ async def lifespan(app: FastAPI):
     tool_registry = get_tool_registry()
     app.state.tool_registry = tool_registry
 
+    # 初始化 MCP Client Manager（绑定 ToolRegistry）
+    from nexus.mcp.client import get_mcp_client_manager
+
+    mcp_client_mgr = get_mcp_client_manager(tool_registry=tool_registry)
+    app.state.mcp_client_manager = mcp_client_mgr
+
+    # 可选：启动内置 MCP Server（后台任务，独立端口）
+    mcp_server_task = None
+    if settings.MCP_SERVER_ENABLED:
+        from nexus.mcp.server import NexusMCPServer
+
+        mcp_server = NexusMCPServer(tool_registry, name="nexus")
+        mcp_server_task = asyncio.create_task(
+            mcp_server.run_async(
+                transport="sse",
+                port=settings.MCP_SERVER_PORT,
+                host=settings.MCP_SERVER_HOST,
+            )
+        )
+        app.state.mcp_server = mcp_server
+
     yield
 
     # 关闭（逆序）
+    if mcp_server_task:
+        mcp_server_task.cancel()
+        try:
+            await mcp_server_task
+        except asyncio.CancelledError:
+            pass
+
     listener_task.cancel()
     try:
         await listener_task
@@ -125,7 +153,7 @@ async def metrics():
 
 
 # 导入并注册路由（使用Service层）
-from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks
+from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp
 from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
@@ -133,6 +161,7 @@ app.include_router(agents.router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(runs.router, prefix="/api/v1/runs", tags=["runs"])
 app.include_router(hitl_tasks.router, prefix="/api/v1/hitl", tags=["hitl"])
+app.include_router(mcp.router, prefix="/api/v1/mcp", tags=["mcp"])
 app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）
 
 
