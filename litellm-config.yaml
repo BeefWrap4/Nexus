@@ -22,11 +22,11 @@ model_list:
   # DeepSeek
   - model_name: deepseek-chat
     litellm_params:
-      model: deepseek/deepseek-v4-pro
+      model: deepseek/deepseek-chat
       api_key: os.environ/DEEPSEEK_API_KEY
-  - model_name: deepseek-v4-pro
+  - model_name: deepseek-reasoner
     litellm_params:
-      model: deepseek/deepseek-v4-pro
+      model: deepseek/deepseek-reasoner
       api_key: os.environ/DEEPSEEK_API_KEY
 
   # DashScope (阿里云)

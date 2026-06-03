@@ -327,10 +327,14 @@ async def run_crew(
                 workers.append(base_agent)
 
     if not manager and workers:
-        manager = workers.pop(0)
+        manager = workers[0]
 
     if not manager:
         raise HTTPException(status_code=400, detail="Crew has no valid agents")
+
+    # Sequential / Parallel 模式下 manager 也应参与执行
+    if crew_data["mode"] in ("sequential", "parallel") and manager not in workers:
+        workers.append(manager)
 
     # 4. 构建 Crew 配置并执行
     config = CrewConfig(
