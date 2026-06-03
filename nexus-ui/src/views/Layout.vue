@@ -51,6 +51,10 @@ import {
   BarChartOutlined,
   SettingOutlined,
   ApiOutlined,
+  FileTextOutlined,
+  LineChartOutlined,
+  ExperimentOutlined,
+  AuditOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
@@ -68,6 +72,10 @@ const pageTitle = computed(() => {
     runs: '执行监控',
     hitl: '审批任务',
     mcp: 'MCP 管理',
+    prompts: 'Prompt 管理',
+    traces: 'LLM Trace',
+    experiments: 'A/B 实验',
+    evals: 'Eval 评估',
     analytics: '分析',
     settings: '设置',
   }
@@ -80,6 +88,10 @@ const menuItems = [
   { key: 'agents', icon: () => h(RobotOutlined), label: 'Agents' },
   { key: 'tools', icon: () => h(ToolOutlined), label: '工具' },
   { key: 'mcp', icon: () => h(ApiOutlined), label: 'MCP 管理' },
+  { key: 'prompts', icon: () => h(FileTextOutlined), label: 'Prompts' },
+  { key: 'traces', icon: () => h(LineChartOutlined), label: 'Traces' },
+  { key: 'experiments', icon: () => h(ExperimentOutlined), label: '实验' },
+  { key: 'evals', icon: () => h(AuditOutlined), label: 'Eval' },
   { key: 'hitl', icon: () => h(QuestionCircleOutlined), label: '审批任务' },
   { key: 'analytics', icon: () => h(BarChartOutlined), label: '分析' },
   { key: 'settings', icon: () => h(SettingOutlined), label: '设置' },

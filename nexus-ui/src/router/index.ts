@@ -65,6 +65,26 @@ const routes = [
         component: () => import('@/views/Analytics.vue'),
       },
       {
+        path: 'prompts',
+        name: 'PromptEditor',
+        component: () => import('@/views/PromptEditor.vue'),
+      },
+      {
+        path: 'traces',
+        name: 'TraceViewer',
+        component: () => import('@/views/TraceViewer.vue'),
+      },
+      {
+        path: 'experiments',
+        name: 'PromptExperiments',
+        component: () => import('@/views/PromptExperiments.vue'),
+      },
+      {
+        path: 'evals',
+        name: 'EvalDashboard',
+        component: () => import('@/views/EvalDashboard.vue'),
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
