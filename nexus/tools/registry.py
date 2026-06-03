@@ -361,6 +361,8 @@ def get_tool_registry() -> ToolRegistry:
 
         register_rag_tools(_global_tool_registry)
         register_code_review_tools(_global_tool_registry)
+        from nexus.tools.github_tools import register_github_tools
+        register_github_tools(_global_tool_registry)
     return _global_tool_registry
 
 
