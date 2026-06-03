@@ -4,6 +4,8 @@
 class NexusException(Exception):
     """NEXUS基础异常."""
 
+    status_code: int = 400
+
     def __init__(self, message: str, code: str = "NEXUS_ERROR"):
         self.message = message
         self.code = code
@@ -18,6 +20,8 @@ class WorkflowException(NexusException):
 
 class WorkflowNotFoundException(WorkflowException):
     """工作流不存在."""
+
+    status_code = 404
 
     def __init__(self, workflow_id: str):
         super().__init__(
@@ -39,6 +43,8 @@ class WorkflowExecutionException(WorkflowException):
 class CircularDependencyException(WorkflowValidationException):
     """工作流存在循环依赖."""
 
+    status_code = 422
+
     def __init__(self, node_ids: list[str]):
         super().__init__(
             message=f"Circular dependency detected: {' -> '.join(node_ids)}",
@@ -55,6 +61,8 @@ class RunException(NexusException):
 class RunNotFoundException(RunException):
     """执行实例不存在."""
 
+    status_code = 404
+
     def __init__(self, run_id: str):
         super().__init__(
             message=f"Run '{run_id}' not found",
@@ -64,6 +72,8 @@ class RunNotFoundException(RunException):
 
 class CheckpointNotFoundException(RunException):
     """检查点不存在."""
+
+    status_code = 404
 
     def __init__(self, run_id: str):
         super().__init__(
@@ -81,6 +91,8 @@ class AgentException(NexusException):
 class AgentNotFoundException(AgentException):
     """Agent不存在."""
 
+    status_code = 404
+
     def __init__(self, agent_id: str):
         super().__init__(
             message=f"Agent '{agent_id}' not found",
@@ -91,6 +103,8 @@ class AgentNotFoundException(AgentException):
 class LLMCallException(AgentException):
     """LLM调用失败."""
 
+    status_code = 502
+
     def __init__(self, message: str, provider: str = ""):
         super().__init__(
             message=f"LLM call failed{' [' + provider + ']' if provider else ''}: {message}",
@@ -100,6 +114,8 @@ class LLMCallException(AgentException):
 
 class MaxIterationsReachedException(AgentException):
     """Agent达到最大迭代次数."""
+
+    status_code = 422
 
     def __init__(self, agent_name: str, max_iterations: int):
         super().__init__(
@@ -117,6 +133,8 @@ class ToolException(NexusException):
 class ToolNotFoundException(ToolException):
     """工具不存在."""
 
+    status_code = 404
+
     def __init__(self, tool_name: str):
         super().__init__(
             message=f"Tool '{tool_name}' not found",
@@ -127,6 +145,8 @@ class ToolNotFoundException(ToolException):
 class ToolPermissionDeniedException(ToolException):
     """工具权限不足."""
 
+    status_code = 403
+
     def __init__(self, tool_name: str):
         super().__init__(
             message=f"Permission denied for tool '{tool_name}'",
@@ -136,6 +156,8 @@ class ToolPermissionDeniedException(ToolException):
 
 class ToolExecutionException(ToolException):
     """工具执行失败."""
+
+    status_code = 502
 
     def __init__(self, tool_name: str, message: str):
         super().__init__(
@@ -153,6 +175,8 @@ class HITLException(NexusException):
 class HITLTaskNotFoundException(HITLException):
     """审批任务不存在."""
 
+    status_code = 404
+
     def __init__(self, task_id: str):
         super().__init__(
             message=f"HITL task '{task_id}' not found",
@@ -162,6 +186,8 @@ class HITLTaskNotFoundException(HITLException):
 
 class HITLTimeoutException(HITLException):
     """审批任务超时."""
+
+    status_code = 408
 
     def __init__(self, task_id: str):
         super().__init__(
@@ -179,6 +205,8 @@ class SecurityException(NexusException):
 class AuthenticationException(SecurityException):
     """认证失败."""
 
+    status_code = 401
+
     def __init__(self, message: str = "Authentication failed"):
         super().__init__(message=message, code="AUTHENTICATION_FAILED")
 
@@ -186,12 +214,16 @@ class AuthenticationException(SecurityException):
 class AuthorizationException(SecurityException):
     """授权失败."""
 
+    status_code = 403
+
     def __init__(self, message: str = "Permission denied"):
         super().__init__(message=message, code="AUTHORIZATION_FAILED")
 
 
 class PermissionDeniedException(SecurityException):
     """权限不足."""
+
+    status_code = 403
 
     def __init__(self, resource: str = "", action: str = ""):
         super().__init__(
@@ -208,6 +240,8 @@ class TenantException(NexusException):
 
 class TenantNotFoundException(TenantException):
     """租户不存在."""
+
+    status_code = 404
 
     def __init__(self, tenant_id: str):
         super().__init__(

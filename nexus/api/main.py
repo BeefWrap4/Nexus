@@ -171,7 +171,7 @@ app.add_middleware(PrometheusMiddleware)
 async def nexus_exception_handler(request: Request, exc: NexusException):
     """处理NEXUS自定义异常."""
     return JSONResponse(
-        status_code=400,
+        status_code=exc.status_code,
         content={"detail": exc.message, "code": exc.code},
     )
 
