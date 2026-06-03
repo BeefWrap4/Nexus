@@ -10,11 +10,24 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
+# 国内源加速（阿里云）— 可通过 build-arg 关闭
+ARG USE_CN_MIRROR=true
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+        && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 # 安装构建依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# 配置 pip 国内源
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ \
+        && pip config set global.trusted-host mirrors.aliyun.com; \
+    fi
 
 # 复制依赖文件
 COPY requirements.txt .
@@ -31,6 +44,13 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 FROM python:3.11-slim AS production
 
 WORKDIR /app
+
+# 国内源加速（阿里云）— 从 builder stage 继承 build-arg 需重新声明
+ARG USE_CN_MIRROR=true
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+        && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi
 
 # 安装运行时系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -75,6 +95,7 @@ FROM production AS development
 
 USER root
 
+# 国内源已在 production stage 配置，此处直接复用
 # 安装开发额外依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \

@@ -4,6 +4,32 @@ version: "3.9"
 # NEXUS - Enterprise Multi-Agent Orchestration Engine
 # Docker Compose 完整部署配置
 # =============================================================================
+#
+# 国内源加速配置指南
+# ---------------------------------------------------------------------------
+# 1. Docker Hub 镜像加速器（宿主机全局配置）
+#    复制 .docker/daemon.json.example 到 /etc/docker/daemon.json，然后重启 Docker:
+#    $ sudo systemctl restart docker
+#
+# 2. 构建时关闭国内源（海外部署时使用）
+#    $ USE_CN_MIRROR=false docker compose build
+#    或在 .env 文件中设置 USE_CN_MIRROR=false
+#
+# 3. 各服务源映射
+#    ┌──────────────┬────────────────────────────────────────────────┐
+#    │ 服务          │ 国内源                                         │
+#    ├──────────────┼────────────────────────────────────────────────┤
+#    │ pip (backend)│ mirrors.aliyun.com/pypi/simple/               │
+#    │ apt (backend)│ mirrors.aliyun.com (Debian)                   │
+#    │ npm (ui)     │ registry.npmmirror.com (淘宝 npm)             │
+#    │ apk (ui)     │ mirrors.aliyun.com (Alpine)                   │
+#    │ postgres     │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    │ redis        │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    │ minio        │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    │ litellm      │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    │ prometheus   │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    │ grafana      │ docker.mirrors.sjtug.sjtu.edu.cn (镜像加速)   │
+#    └──────────────┴────────────────────────────────────────────────┘
 
 services:
   # ---------------------------------------------------------------------------
@@ -135,6 +161,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: ${DOCKER_BUILD_TARGET:-development}
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     container_name: nexus-api
     restart: unless-stopped
     environment:
@@ -218,6 +246,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: ${DOCKER_BUILD_TARGET:-development}
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     container_name: nexus-worker
     restart: unless-stopped
     environment:
@@ -266,6 +296,8 @@ services:
     build:
       context: ./nexus-ui
       dockerfile: Dockerfile
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     container_name: nexus-ui
     restart: unless-stopped
     ports:
@@ -285,6 +317,8 @@ services:
     build:
       context: ./nexus-ui
       dockerfile: Dockerfile.dev
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     container_name: nexus-dev-ui
     restart: unless-stopped
     environment:

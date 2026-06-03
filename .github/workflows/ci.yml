@@ -1,6 +1,6 @@
 # =============================================================================
 # NEXUS CI/CD Pipeline
-# 教案部署规范: push → lint → test → build image
+# 规范: push/PR → lint → test → build → push → deploy
 # 触发: push/PR to main 分支
 # =============================================================================
 
@@ -14,6 +14,9 @@ on:
 
 env:
   PYTHON_VERSION: '3.12'
+  REGISTRY: ghcr.io
+  IMAGE_API: ${{ github.repository }}/api
+  IMAGE_UI: ${{ github.repository }}/ui
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -60,7 +63,6 @@ jobs:
           pip install -r requirements.txt
       - name: Run tests
         run: |
-          cd nexus
           pytest tests/ -v --ignore=tests/test_workflow_engine.py
         env:
           REDIS_URL: redis://localhost:6379/0
@@ -70,44 +72,103 @@ jobs:
           DATABASE_URL: sqlite+aiosqlite:///./test.db
 
   # ---------------------------------------------------------------------------
-  # Build API Image — Docker multi-stage (production target)
+  # Build & Push API Image — Docker multi-stage (production target)
   # ---------------------------------------------------------------------------
   build-api:
     name: Build API Image
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build API image
         uses: docker/build-push-action@v5
         with:
-          context: ./nexus
-          file: ./nexus/Dockerfile
+          context: .
+          file: ./Dockerfile
           target: production
-          push: false
-          tags: nexus-api:latest
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_API }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_API }}:${{ github.sha }}
+          build-args: |
+            USE_CN_MIRROR=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
-  # Build UI Image — Vue + nginx
+  # Build & Push UI Image — Vue + nginx
   # ---------------------------------------------------------------------------
   build-ui:
     name: Build UI Image
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build UI image
         uses: docker/build-push-action@v5
         with:
-          context: ./nexus/nexus-ui
-          file: ./nexus/nexus-ui/Dockerfile
-          push: false
-          tags: nexus-ui:latest
+          context: ./nexus-ui
+          file: ./nexus-ui/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_UI }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_UI }}:${{ github.sha }}
+          build-args: |
+            USE_CN_MIRROR=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy — 通过 SSH 触发远程服务器部署（可选）
+  # 需要配置 DEPLOY_HOST, DEPLOY_USER, DEPLOY_KEY 等 secrets
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Production
+    needs: [build-api, build-ui]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # permissions 需要 packages:read 以拉取镜像
+    permissions:
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        if: env.DEPLOY_HOST != '' && env.DEPLOY_USER != ''
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            echo "🚀 Deploying NEXUS..."
+            cd /opt/nexus || exit 1
+            git pull origin main
+            bash scripts/deploy.sh --full
+            echo "✅ Deployment triggered"

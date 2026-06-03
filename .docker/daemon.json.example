@@ -1,0 +1,14 @@
+{
+  "registry-mirrors": [
+    "https://docker.mirrors.sjtug.sjtu.edu.cn",
+    "https://docker.m.daocloud.io",
+    "https://hub-mirror.c.163.com",
+    "https://dockerproxy.com",
+    "https://docker.mirrors.ustc.edu.cn"
+  ],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}

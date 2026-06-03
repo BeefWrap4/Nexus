@@ -11,6 +11,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# 国内源加速 — 可通过 build-arg 关闭
+ARG USE_CN_MIRROR=true
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        npm config set registry https://registry.npmmirror.com; \
+    fi
+
 # Install dependencies (leveraging Docker cache)
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -23,6 +29,12 @@ RUN npm run build
 # Stage 2: Production Serve
 # ---------------------------------------------------------------------------
 FROM nginx:alpine
+
+# 国内源加速（Alpine apk）— 可通过 build-arg 关闭
+ARG USE_CN_MIRROR=true
+RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
+        sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories; \
+    fi
 
 # Copy built static files
 COPY --from=builder /app/dist /usr/share/nginx/html
