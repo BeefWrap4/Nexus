@@ -339,12 +339,13 @@ class TestGitHubWebhook:
         body_bytes = json.dumps(payload).encode()
         sig = self._make_signature(body_bytes, "mysecret")
 
-        # Patch the module-level secret and mock the workflow execution
+        # Patch the module-level secret and mock CodeReviewService
         with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", "mysecret"):
-            with patch("nexus.api.routes.github_webhook.WorkflowEngine") as mock_engine_cls:
-                mock_engine = AsyncMock()
-                mock_engine.execute = AsyncMock(return_value={"status": "completed"})
-                mock_engine_cls.return_value = mock_engine
+            with patch(
+                "nexus.api.routes.github_webhook.code_review_service.submit_pr_review",
+                new_callable=AsyncMock,
+            ) as mock_submit:
+                mock_submit.return_value = {"run_id": "test-run-id-123"}
 
                 response = await async_client.post(
                     "/api/v1/webhooks/github",
@@ -366,22 +367,34 @@ class TestGitHubWebhook:
 
     @pytest.mark.asyncio
     async def test_ignored_event_type(self, monkeypatch, async_client: AsyncClient):
-        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", ""):
+        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", "mysecret"):
+            body_bytes = json.dumps({"action": "labeled"}).encode()
+            sig = self._make_signature(body_bytes, "mysecret")
             response = await async_client.post(
                 "/api/v1/webhooks/github",
-                json={"action": "labeled"},
-                headers={"X-GitHub-Event": "pull_request"},
+                content=body_bytes,
+                headers={
+                    "X-Hub-Signature-256": sig,
+                    "X-GitHub-Event": "pull_request",
+                    "Content-Type": "application/json",
+                },
             )
         assert response.status_code == 200
         assert response.json()["status"] == "ignored"
 
     @pytest.mark.asyncio
     async def test_non_pr_event(self, monkeypatch, async_client: AsyncClient):
-        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", ""):
+        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", "mysecret"):
+            body_bytes = json.dumps({"ref": "refs/heads/main"}).encode()
+            sig = self._make_signature(body_bytes, "mysecret")
             response = await async_client.post(
                 "/api/v1/webhooks/github",
-                json={"ref": "refs/heads/main"},
-                headers={"X-GitHub-Event": "push"},
+                content=body_bytes,
+                headers={
+                    "X-Hub-Signature-256": sig,
+                    "X-GitHub-Event": "push",
+                    "Content-Type": "application/json",
+                },
             )
         assert response.status_code == 200
         assert response.json()["status"] == "ignored"
@@ -389,15 +402,22 @@ class TestGitHubWebhook:
 
     @pytest.mark.asyncio
     async def test_invalid_payload_missing_pr(self, monkeypatch, async_client: AsyncClient):
-        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", ""):
+        with patch("nexus.api.routes.github_webhook._WEBHOOK_SECRET", "mysecret"):
+            payload = {
+                "action": "opened",
+                "pull_request": {},
+                "repository": {"name": "test-repo", "owner": {"login": ""}},
+            }
+            body_bytes = json.dumps(payload).encode()
+            sig = self._make_signature(body_bytes, "mysecret")
             response = await async_client.post(
                 "/api/v1/webhooks/github",
-                json={
-                    "action": "opened",
-                    "pull_request": {},
-                    "repository": {"name": "test-repo", "owner": {"login": ""}},
+                content=body_bytes,
+                headers={
+                    "X-Hub-Signature-256": sig,
+                    "X-GitHub-Event": "pull_request",
+                    "Content-Type": "application/json",
                 },
-                headers={"X-GitHub-Event": "pull_request"},
             )
         assert response.status_code == 400
         assert "Invalid PR payload" in response.json()["detail"]

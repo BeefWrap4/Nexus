@@ -6,48 +6,22 @@ and posts review comments back to GitHub.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
 import os
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
-from nexus.engine.checkpoint import CheckpointManager
-from nexus.engine.enums import NodeType
-from nexus.engine.event_bus import EventBus
-from nexus.engine.node_executors import (
-    AgentNodeExecutor,
-    EndNodeExecutor,
-    StartNodeExecutor,
-    ToolNodeExecutor,
-)
-from nexus.engine.router_engine import RouterEngine
-from nexus.engine.state_manager import StateManager
-from nexus.engine.variable_pool import VariablePool
-from nexus.engine.workflow_engine import Edge, Node, WorkflowDefinition, WorkflowEngine
-from nexus.tools.registry import get_tool_registry
+from nexus.db.database import get_db_session
+from nexus.services.code_review import CodeReviewService
 
 router = APIRouter()
 
 _WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-
-
-class PRReviewConfig(BaseModel):
-    """Configuration for PR auto-review."""
-
-    language: str = Field(default="auto", description="Programming language")
-    focus_areas: str = Field(
-        default="security, performance, maintainability, correctness",
-    )
-    strictness: str = Field(default="normal")
-    auto_review: bool = Field(default=True, description="Auto-review on PR open/update")
+code_review_service = CodeReviewService()
 
 
 @router.post("/webhooks/github")
@@ -68,6 +42,12 @@ async def github_webhook(
         ).hexdigest()
         if not hmac.compare_digest(expected, x_hub_signature_256):
             raise HTTPException(status_code=401, detail="Invalid signature")
+    else:
+        # 生产环境必须配置 GITHUB_WEBHOOK_SECRET
+        raise HTTPException(
+            status_code=401,
+            detail="GITHUB_WEBHOOK_SECRET not configured",
+        )
 
     payload = json.loads(body)
 
@@ -85,107 +65,25 @@ async def github_webhook(
     owner = repo.get("owner", {}).get("login", "")
     repo_name = repo.get("name", "")
     pull_number = pr.get("number", 0)
-    diff_url = pr.get("diff_url", "")
 
     if not owner or not repo_name or not pull_number:
         raise HTTPException(status_code=400, detail="Invalid PR payload")
 
-    # Trigger review workflow
-    run_id = uuid4()
-    registry = get_tool_registry()
-    event_bus = EventBus()
-
-    wf = WorkflowDefinition(
-        nodes=[
-            Node(id="start", type=NodeType.START),
-            Node(
-                id="fetch_diff",
-                type=NodeType.TOOL,
-                config={
-                    "tool_name": "github_get_pr_diff",
-                    "tool_params": {
-                        "owner": owner,
-                        "repo": repo_name,
-                        "pull_number": pull_number,
-                    },
-                },
-            ),
-            Node(
-                id="review",
-                type=NodeType.AGENT,
-                config={
-                    "agent_name": "pr-code-reviewer",
-                    "agent_role": "senior software engineer performing PR code review",
-                    "agent_goal": "Review PR diff and produce a structured review report",
-                    "task_description": (
-                        "Review the PR diff. First call parse_diff to structure it, "
-                        "then detect_language, security_check, perf_check, and style_check "
-                        "to find deterministic issues. Finally use your expertise for logic/design review.\n"
-                        "Output a concise review report with findings and suggestions."
-                    ),
-                    "template_variables": {
-                        "role": "senior software engineer",
-                        "language": "auto",
-                        "focus_areas": "security, performance, maintainability, correctness",
-                        "strictness": "normal",
-                        "diff_content": "{{#fetch_diff.output.diff#}}",
-                    },
-                    "provider": "deepseek",
-                    "model": "deepseek-v4-pro",
-                    "temperature": 0.3,
-                    "max_iterations": 15,
-                },
-            ),
-            Node(
-                id="post_review",
-                type=NodeType.TOOL,
-                config={
-                    "tool_name": "github_post_review_comment",
-                    "tool_params": {
-                        "owner": owner,
-                        "repo": repo_name,
-                        "pull_number": pull_number,
-                        "body": "{{#review.output#}}",
-                    },
-                },
-            ),
-            Node(id="end", type=NodeType.END),
-        ],
-        edges=[
-            Edge(source="start", target="fetch_diff"),
-            Edge(source="fetch_diff", target="review"),
-            Edge(source="review", target="post_review"),
-            Edge(source="post_review", target="end"),
-        ],
-    )
-
-    engine = WorkflowEngine(
-        state_manager=StateManager(),
-        event_bus=event_bus,
-        checkpoint_mgr=CheckpointManager(),
-        variable_pool=VariablePool(),
-        router_engine=RouterEngine(),
-    )
-
-    engine.register_executor(NodeType.START, StartNodeExecutor())
-    engine.register_executor(NodeType.END, EndNodeExecutor())
-    engine.register_executor(NodeType.AGENT, AgentNodeExecutor(tool_registry=registry))
-    engine.register_executor(
-        NodeType.TOOL, ToolNodeExecutor(tool_registry=registry, event_bus=event_bus)
-    )
-
-    async def _run():
-        return await engine.execute(
-            workflow_def=wf,
-            trigger_payload={"pr": pr},
-            run_id=str(run_id),
+    # Trigger review via CodeReviewService (persistent run + ARQ enqueue)
+    # Note: Webhook has no authenticated user, use a default tenant
+    async with get_db_session() as db:
+        result = await code_review_service.submit_pr_review(
+            db,
+            tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
+            owner=owner,
+            repo=repo_name,
+            pull_number=pull_number,
+            pr_data=pr,
         )
-
-    asyncio.create_task(_run())
 
     return {
         "status": "review_started",
-        "run_id": str(run_id),
+        "run_id": result["run_id"],
         "owner": owner,
         "repo": repo_name,
         "pull_number": pull_number,
