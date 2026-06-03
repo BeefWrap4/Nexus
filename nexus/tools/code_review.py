@@ -179,9 +179,10 @@ async def _handle_detect_language(params: dict[str, Any], context: dict[str, Any
         ".py": "python", ".js": "javascript", ".ts": "typescript", ".jsx": "jsx", ".tsx": "tsx",
         ".java": "java", ".go": "go", ".rs": "rust", ".cpp": "cpp", ".c": "c",
         ".rb": "ruby", ".php": "php", ".swift": "swift", ".kt": "kotlin",
-        ".vue": "vue", ".sql": "sql", ".sh": "shell",
+        ".vue": "vue", ".svelte": "svelte", ".sql": "sql", ".sh": "shell",
         ".yaml": "yaml", ".yml": "yaml", ".json": "json", ".xml": "xml",
         ".css": "css", ".scss": "scss", ".html": "html", ".md": "markdown",
+        ".cs": "csharp", ".lua": "lua",
     }
 
     results = []
