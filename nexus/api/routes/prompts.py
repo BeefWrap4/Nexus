@@ -107,7 +107,7 @@ async def create_prompt(
     current_user: Any = Depends(get_current_user),
 ):
     """创建 PromptTemplate（自动生成 v1）."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     user_id = getattr(current_user, "id", None)
 
     return await prompt_service.create(
@@ -129,7 +129,7 @@ async def list_prompts(
     current_user: Any = Depends(get_current_user),
 ):
     """列出 PromptTemplates."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     return await prompt_service.list(db, tenant_id=tenant_id)
 
 
@@ -266,7 +266,7 @@ async def create_experiment(
     current_user: Any = Depends(get_current_user),
 ):
     """创建 Prompt A/B 实验."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
 
     # 验证 template 存在
     template = await prompt_service.get(db, prompt_id)

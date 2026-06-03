@@ -86,7 +86,7 @@ async def list_traces(
     current_user: Any = Depends(get_current_user),
 ):
     """列出 LLM 调用追踪记录."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     items, total = await trace_service.list_traces(
         db,
         tenant_id=tenant_id,
@@ -121,7 +121,7 @@ async def get_trace_summary(
     current_user: Any = Depends(get_current_user),
 ):
     """按 model 聚合的统计：调用次数、平均耗时、平均 token."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     rows = await trace_service.get_summary(
         db,
         tenant_id=tenant_id,

@@ -63,19 +63,20 @@ class RunService(BaseService[WorkflowRun]):
             创建的WorkflowRun实例
         """
         workflow_id = data.get("workflow_id")
-        if not workflow_id:
-            raise WorkflowExecutionException("workflow_id is required to create a run")
+        version = 1
 
-        # 验证工作流存在且属于当前租户
-        workflow = await self.workflow_service.get(session, workflow_id, tenant_id)
-        if workflow is None:
-            raise WorkflowNotFoundException(str(workflow_id))
+        if workflow_id:
+            # 验证工作流存在且属于当前租户
+            workflow = await self.workflow_service.get(session, workflow_id, tenant_id)
+            if workflow is None:
+                raise WorkflowNotFoundException(str(workflow_id))
+            version = workflow.current_version or 1
 
         db_data = {
             "id": uuid4(),
             "tenant_id": tenant_id,
             "workflow_id": workflow_id,
-            "version": workflow.current_version or 1,
+            "version": version,
             "status": "pending",
             "trigger_type": data.get("trigger_type", "manual"),
             "trigger_payload": data.get("trigger_payload", {}),

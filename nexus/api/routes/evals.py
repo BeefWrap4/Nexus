@@ -57,7 +57,7 @@ async def create_eval_run(
     current_user: Any = Depends(get_current_user),
 ):
     """创建评估运行."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     return await eval_service.create(
         db,
         name=data.name,
@@ -73,7 +73,7 @@ async def list_eval_runs(
     current_user: Any = Depends(get_current_user),
 ):
     """列出评估运行."""
-    tenant_id = getattr(current_user, "tenant_id", None)
+    tenant_id = current_user.get("tenant_id", "default")
     return await eval_service.list(db, tenant_id=tenant_id)
 
 

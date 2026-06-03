@@ -459,22 +459,23 @@ class TestRunService:
     """测试RunService."""
 
     @pytest.mark.asyncio
-    async def test_create_requires_workflow_id(self, db_session: AsyncSession):
-        """创建Run时必须提供workflow_id."""
+    async def test_create_without_workflow_id(self, db_session: AsyncSession):
+        """创建Run时允许workflow_id为None（内联workflow，如CodeReview）."""
         service = RunService()
         tenant_id = uuid4()
 
-        with pytest.raises(WorkflowExecutionException) as exc_info:
-            await service.create(
-                db_session,
-                data={"trigger_type": "manual"},
-                tenant_id=tenant_id,
-            )
-        assert "workflow_id is required" in str(exc_info.value)
+        run = await service.create(
+            db_session,
+            data={"trigger_type": "code_review"},
+            tenant_id=tenant_id,
+        )
+        assert run.workflow_id is None
+        assert run.status == "pending"
+        assert run.trigger_type == "code_review"
 
     @pytest.mark.asyncio
     async def test_create_validates_workflow_exists(self, db_session: AsyncSession):
-        """创建Run时应验证工作流存在."""
+        """创建Run时若提供workflow_id则验证工作流存在."""
         service = RunService()
         tenant_id = uuid4()
 

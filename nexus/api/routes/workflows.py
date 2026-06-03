@@ -95,7 +95,8 @@ async def create_workflow(
 ):
     """创建工作流."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    user_id = UUID(current_user.get("id"))
+    user_id_raw = current_user.get("id")
+    user_id = UUID(user_id_raw) if user_id_raw and len(str(user_id_raw)) == 36 else None
     wf = await workflow_service.create(
         db,
         data={
@@ -220,7 +221,8 @@ async def create_version(
 ):
     """创建工作流新版本."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    user_id = UUID(current_user.get("id"))
+    user_id_raw = current_user.get("id")
+    user_id = UUID(user_id_raw) if user_id_raw and len(str(user_id_raw)) == 36 else None
     wf = await workflow_service.get(db, workflow_id, tenant_id)
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
@@ -264,7 +266,8 @@ async def clone_workflow(
 ):
     """克隆工作流."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    user_id = UUID(current_user.get("id"))
+    user_id_raw = current_user.get("id")
+    user_id = UUID(user_id_raw) if user_id_raw and len(str(user_id_raw)) == 36 else None
     wf = await workflow_service.get(db, workflow_id, tenant_id)
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
