@@ -33,7 +33,7 @@ class Agent(Base):
     role = Column(String(255))  # 角色描述
     goal = Column(Text)  # 目标
     backstory = Column(Text)  # 背景/个性
-    model_config = Column(JSONVariant, nullable=False)  # {provider, model, temperature, max_tokens}
+    llm_settings = Column(JSONVariant, nullable=False)  # {provider, model, temperature, max_tokens}
     system_prompt = Column(Text)
     system_prompt_template_id = Column(
         UUIDVariant, ForeignKey("prompt_templates.id"), nullable=True

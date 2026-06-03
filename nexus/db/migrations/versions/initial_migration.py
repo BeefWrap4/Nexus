@@ -175,7 +175,7 @@ def upgrade() -> None:
         sa.Column('role', sa.String(255), nullable=True),
         sa.Column('goal', sa.Text(), nullable=True),
         sa.Column('backstory', sa.Text(), nullable=True),
-        sa.Column('model_config', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='{}'),
+        sa.Column('llm_settings', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='{}'),
         sa.Column('system_prompt', sa.Text(), nullable=True),
         sa.Column('system_prompt_template_id', sa.UUID(), sa.ForeignKey('prompt_templates.id', ondelete='SET NULL'), nullable=True),
         sa.Column('tools', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='[]'),

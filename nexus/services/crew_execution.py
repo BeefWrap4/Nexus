@@ -29,13 +29,13 @@ from nexus.services.crew import CrewRunService, CrewService
 # ---------------------------------------------------------------------------
 
 
-def _create_llm_client(model_config: dict) -> LLMClient:
+def _create_llm_client(llm_settings: dict) -> LLMClient:
     """根据模型配置创建 LLMClient.
 
     优先使用 Provider 直连（当环境变量中有对应 API Key 时），
     否则降级到 LiteLLM Proxy。
     """
-    provider = model_config.get("provider", settings.DEFAULT_LLM_PROVIDER)
+    provider = llm_settings.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
     if provider in settings.PROVIDER_CONFIGS:
         direct_url, env_key = settings.PROVIDER_CONFIGS[provider]
@@ -217,16 +217,16 @@ class CrewExecutionService:
                 goal=agent_model.goal or "",
                 backstory=agent_model.backstory or "",
                 system_prompt=agent_model.system_prompt or "",
-                provider=agent_model.model_config.get(
+                provider=agent_model.llm_settings.get(
                     "provider", settings.DEFAULT_LLM_PROVIDER
                 ),
-                model=agent_model.model_config.get(
+                model=agent_model.llm_settings.get(
                     "model", settings.DEFAULT_LLM_MODEL
                 ),
-                temperature=agent_model.model_config.get(
+                temperature=agent_model.llm_settings.get(
                     "temperature", settings.DEFAULT_LLM_TEMPERATURE
                 ),
-                max_tokens=agent_model.model_config.get(
+                max_tokens=agent_model.llm_settings.get(
                     "max_tokens", settings.DEFAULT_LLM_MAX_TOKENS
                 ),
                 max_iterations=agent_model.max_iterations
@@ -234,7 +234,7 @@ class CrewExecutionService:
                 tools=agent_model.tools or [],
             )
 
-            llm_client = _create_llm_client(agent_model.model_config)
+            llm_client = _create_llm_client(agent_model.llm_settings)
             base_agent = BaseAgent(
                 config=agent_config,
                 llm_client=llm_client,

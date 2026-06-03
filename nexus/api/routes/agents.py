@@ -55,7 +55,7 @@ def _to_response(agent) -> AgentResponse:
         name=agent.name,
         role=agent.role or "",
         goal=agent.goal or "",
-        llm_config=agent.model_config or {},
+        llm_config=agent.llm_settings or {},
         created_at=agent.created_at.isoformat() if agent.created_at else "",
     )
 
@@ -88,7 +88,7 @@ async def create_agent(
             "role": data.role,
             "goal": data.goal,
             "backstory": data.backstory,
-            "model_config": data.llm_config,
+            "llm_settings": data.llm_config,
             "system_prompt": data.system_prompt,
             "tools": data.tools,
             "max_iterations": data.max_iterations,

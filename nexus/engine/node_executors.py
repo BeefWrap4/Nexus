@@ -786,16 +786,16 @@ class CrewNodeExecutor(NodeExecutor):
                         goal=agent_model.goal or "",
                         backstory=agent_model.backstory or "",
                         system_prompt=agent_model.system_prompt or "",
-                        provider=agent_model.model_config.get("provider", settings.DEFAULT_LLM_PROVIDER),
-                        model=agent_model.model_config.get("model", settings.DEFAULT_LLM_MODEL),
-                        temperature=agent_model.model_config.get("temperature", settings.DEFAULT_LLM_TEMPERATURE),
-                        max_tokens=agent_model.model_config.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS),
+                        provider=agent_model.llm_settings.get("provider", settings.DEFAULT_LLM_PROVIDER),
+                        model=agent_model.llm_settings.get("model", settings.DEFAULT_LLM_MODEL),
+                        temperature=agent_model.llm_settings.get("temperature", settings.DEFAULT_LLM_TEMPERATURE),
+                        max_tokens=agent_model.llm_settings.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS),
                         max_iterations=agent_model.max_iterations or settings.DEFAULT_MAX_ITERATIONS,
                         tools=agent_model.tools or [],
                     )
 
                     # 创建 LLMClient（复用 AgentNodeExecutor 的 provider 映射逻辑）
-                    llm_client = self._create_llm_client(agent_model.model_config)
+                    llm_client = self._create_llm_client(agent_model.llm_settings)
 
                     base_agent = BaseAgent(
                         config=agent_config,
@@ -876,9 +876,9 @@ class CrewNodeExecutor(NodeExecutor):
                 error={"type": type(e).__name__, "message": str(e)},
             )
 
-    def _create_llm_client(self, model_config: dict[str, Any]) -> LLMClient:
-        """根据 Agent model_config 创建 LLMClient."""
-        provider = model_config.get("provider", settings.DEFAULT_LLM_PROVIDER)
+    def _create_llm_client(self, llm_settings: dict[str, Any]) -> LLMClient:
+        """根据 Agent llm_settings 创建 LLMClient."""
+        provider = llm_settings.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
         provider_base_urls = {
             "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
