@@ -294,13 +294,12 @@ class ToolRegistry:
     async def _execute_python(
         self, tool: Tool, params: dict[str, Any], context: dict[str, Any]
     ) -> ToolResult:
-        """执行Python工具."""
-        # Python执行应在受限沙箱中运行
-        config = tool.config
-        code = params.get("code", "")
+        """执行Python工具 (in-process via handler callback)."""
+        if tool.handler is not None:
+            return await tool.handler(params, context)
 
-        # 简化版：不执行真实代码
-        # 生产环境应使用sandbox（如Docker、gVisor）
+        # Fallback: placeholder for tools without a handler
+        code = params.get("code", "")
         return ToolResult(
             success=True,
             data={"code": code, "result": "Python execution placeholder"},
@@ -358,8 +357,10 @@ def get_tool_registry() -> ToolRegistry:
         _global_tool_registry = ToolRegistry()
         # 延迟导入避免循环依赖
         from nexus.tools.rag import register_rag_tools
+        from nexus.tools.code_review import register_code_review_tools
 
         register_rag_tools(_global_tool_registry)
+        register_code_review_tools(_global_tool_registry)
     return _global_tool_registry
 
 
