@@ -33,6 +33,7 @@ from nexus.engine.node_executors import (
     StartNodeExecutor,
     EndNodeExecutor,
     AgentNodeExecutor,
+    CrewNodeExecutor,
     HITLNodeExecutor,
     ToolNodeExecutor,
     ConditionNodeExecutor,
@@ -139,6 +140,10 @@ async def execute_workflow_job(
     engine.register_executor(
         NodeType.HITL,
         HITLNodeExecutor(hitl_controller=hitl_controller, default_timeout=10),
+    )
+    engine.register_executor(
+        NodeType.CREW,
+        CrewNodeExecutor(tool_registry=tool_registry, event_bus=event_bus),
     )
 
     # 4. 解析工作流定义

@@ -153,7 +153,7 @@ async def metrics():
 
 
 # 导入并注册路由（使用Service层）
-from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts, evals, code_review, github_webhook
+from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts, evals, code_review, github_webhook, crews
 from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
@@ -167,6 +167,7 @@ app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(evals.router, prefix="/api/v1/evals", tags=["evals"])
 app.include_router(code_review.router, prefix="/api/v1/code-review", tags=["code-review"])
 app.include_router(github_webhook.router, prefix="/api/v1", tags=["github"])
+app.include_router(crews.router, prefix="/api/v1/crews", tags=["crews"])
 app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）
 
 

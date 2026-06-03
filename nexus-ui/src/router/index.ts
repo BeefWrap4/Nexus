@@ -40,6 +40,16 @@ const routes = [
         component: () => import('@/views/Agents.vue'),
       },
       {
+        path: 'crews',
+        name: 'Crews',
+        component: () => import('@/views/Crews.vue'),
+      },
+      {
+        path: 'crews/:id/edit',
+        name: 'CrewBuilder',
+        component: () => import('@/views/CrewBuilder.vue'),
+      },
+      {
         path: 'tools',
         name: 'Tools',
         component: () => import('@/views/Tools.vue'),

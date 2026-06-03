@@ -103,6 +103,9 @@ def subscribe_websocket_to_eventbus(event_bus: EventBus, conn_mgr: ConnectionMan
             "hitl_cancelled",
             "stream_chunk",
             "stream_end",
+            "crew_step",
+            "crew_complete",
+            "crew_error",
         ):
             await conn_mgr.broadcast_to_run(run_id, event)
 

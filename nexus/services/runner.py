@@ -18,6 +18,7 @@ from nexus.engine.enums import NodeType
 from nexus.engine.event_bus import EventBus
 from nexus.engine.node_executors import (
     AgentNodeExecutor,
+    CrewNodeExecutor,
     EndNodeExecutor,
     HITLNodeExecutor,
     StartNodeExecutor,
@@ -87,6 +88,10 @@ class WorkflowRunner:
         engine.register_executor(
             NodeType.HITL,
             HITLNodeExecutor(hitl_controller=hitl_controller, default_timeout=10),
+        )
+        engine.register_executor(
+            NodeType.CREW,
+            CrewNodeExecutor(event_bus=self.event_bus),
         )
 
         # 5. 广播开始事件

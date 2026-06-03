@@ -18,6 +18,7 @@ import os
 from typing import Any
 
 from nexus.agent.base import AgentConfig, BaseAgent, Task
+from nexus.agent.crew import Crew, CrewConfig, CrewMode
 from nexus.agent.llm_client import LLMClient
 from nexus.config import settings
 from nexus.engine.hitl_controller import HITLController, HITLResponse, HITLType
@@ -684,3 +685,219 @@ class ConditionNodeExecutor(NodeExecutor):
         for target_id in downstream:
             if target_id not in matched_downstream:
                 state.node_states[target_id] = NodeStatus.SKIPPED
+
+
+class CrewNodeExecutor(NodeExecutor):
+    """Crew 节点执行器.
+
+    Phase 10: 将 Crew 多 Agent 协作作为 Workflow DAG 节点执行。
+
+    职责:
+    1. 从 node.config 读取 crew_id，从数据库加载 Crew 配置
+    2. 加载关联的 Agent 列表，为每个 Agent 创建 BaseAgent 实例
+    3. 确定 Manager（role_in_crew == 'manager' 的 Agent）
+    4. 实例化 Crew 并执行协作任务
+    5. 将 CrewResult 写入 state.run_vars
+    """
+
+    def __init__(
+        self,
+        tool_registry: Any = None,
+        event_bus: Any = None,
+    ):
+        self.tool_registry = tool_registry
+        self.event_bus = event_bus
+
+    async def execute(
+        self,
+        node: Node,
+        inputs: dict[str, Any],
+        state: WorkflowState,
+        run_id: str,
+    ) -> NodeResult:
+        """执行 Crew 节点."""
+        config = node.config
+
+        # 1. 读取配置
+        crew_id = config.get("crew_id")
+        task_description = config.get("task_description", config.get("task", ""))
+
+        if not crew_id:
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error={"message": "crew_id not specified in node config"},
+            )
+
+        if not task_description:
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error={"message": "task_description not specified in node config"},
+            )
+
+        try:
+            # 2. 从数据库加载 Crew 配置和关联 Agent
+            from nexus.db.database import AsyncSessionLocal
+            from nexus.models.crew import Crew as CrewModel
+            from nexus.models.agent import Agent as AgentModel
+            from nexus.models.crew import CrewAgent as CrewAgentModel
+            from uuid import UUID
+
+            if isinstance(crew_id, str):
+                crew_id = UUID(crew_id)
+
+            async with AsyncSessionLocal() as session:
+                # 加载 Crew
+                crew_record = await session.get(CrewModel, crew_id)
+                if not crew_record:
+                    return NodeResult(
+                        node_id=node.id,
+                        status=NodeStatus.FAILED,
+                        error={"message": f"Crew '{crew_id}' not found"},
+                    )
+
+                # 加载关联的 CrewAgent + Agent
+                from sqlalchemy import select
+                stmt = (
+                    select(CrewAgentModel, AgentModel)
+                    .join(AgentModel, CrewAgentModel.agent_id == AgentModel.id)
+                    .where(CrewAgentModel.crew_id == crew_id)
+                    .order_by(CrewAgentModel.order_index)
+                )
+                result = await session.execute(stmt)
+                rows = result.all()
+
+                if not rows:
+                    return NodeResult(
+                        node_id=node.id,
+                        status=NodeStatus.FAILED,
+                        error={"message": f"Crew '{crew_id}' has no agents"},
+                    )
+
+                # 3. 为每个 Agent 创建 BaseAgent 实例
+                workers = []
+                manager = None
+
+                for ca, agent_model in rows:
+                    agent_config = AgentConfig(
+                        name=agent_model.name,
+                        role=agent_model.role or "",
+                        goal=agent_model.goal or "",
+                        backstory=agent_model.backstory or "",
+                        system_prompt=agent_model.system_prompt or "",
+                        provider=agent_model.model_config.get("provider", settings.DEFAULT_LLM_PROVIDER),
+                        model=agent_model.model_config.get("model", settings.DEFAULT_LLM_MODEL),
+                        temperature=agent_model.model_config.get("temperature", settings.DEFAULT_LLM_TEMPERATURE),
+                        max_tokens=agent_model.model_config.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS),
+                        max_iterations=agent_model.max_iterations or settings.DEFAULT_MAX_ITERATIONS,
+                        tools=agent_model.tools or [],
+                    )
+
+                    # 创建 LLMClient（复用 AgentNodeExecutor 的 provider 映射逻辑）
+                    llm_client = self._create_llm_client(agent_model.model_config)
+
+                    base_agent = BaseAgent(
+                        config=agent_config,
+                        llm_client=llm_client,
+                        tool_registry=self.tool_registry,
+                    )
+
+                    if ca.role_in_crew == "manager":
+                        manager = base_agent
+                    else:
+                        workers.append(base_agent)
+
+                # 如果没有指定 Manager，使用第一个 Worker 作为 Manager
+                if not manager and workers:
+                    manager = workers.pop(0)
+
+                if not manager:
+                    return NodeResult(
+                        node_id=node.id,
+                        status=NodeStatus.FAILED,
+                        error={"message": f"Crew '{crew_id}' has no valid agents"},
+                    )
+
+                # 4. 构建 CrewConfig
+                crew_config = CrewConfig(
+                    mode=CrewMode(crew_record.mode or "hierarchical"),
+                    max_workers=crew_record.config.get("max_workers", 5),
+                    shared_context_enabled=crew_record.config.get("shared_context_enabled", True),
+                    auto_delegate=crew_record.config.get("auto_delegate", True),
+                )
+
+                # 5. 实例化 Crew 并执行
+                crew = Crew(
+                    manager=manager,
+                    workers=workers,
+                    config=crew_config,
+                    event_bus=self.event_bus,
+                    crew_id=str(crew_id),
+                )
+
+                crew_result = await crew.execute(
+                    task_description=task_description,
+                    context={
+                        "run_id": run_id,
+                        "node_id": node.id,
+                        "tenant_id": state.env_vars.get("tenant_id"),
+                        "user_id": state.env_vars.get("user_id"),
+                    },
+                )
+
+                # 6. 将结果写入 state.run_vars
+                output_key = config.get("output_key", node.id)
+                state.run_vars[output_key] = crew_result.output
+
+                return NodeResult(
+                    node_id=node.id,
+                    status=NodeStatus.SUCCEEDED,
+                    output={
+                        "output": crew_result.output,
+                        "manager_reasoning": crew_result.manager_reasoning,
+                        "worker_results": [
+                            {
+                                "worker_name": w.worker_name,
+                                "output": w.output,
+                                "success": w.success,
+                                "error": w.error,
+                            }
+                            for w in crew_result.worker_results
+                        ],
+                        "tool_calls": crew_result.tool_calls,
+                    },
+                )
+
+        except Exception as e:
+            return NodeResult(
+                node_id=node.id,
+                status=NodeStatus.FAILED,
+                error={"type": type(e).__name__, "message": str(e)},
+            )
+
+    def _create_llm_client(self, model_config: dict[str, Any]) -> LLMClient:
+        """根据 Agent model_config 创建 LLMClient."""
+        provider = model_config.get("provider", settings.DEFAULT_LLM_PROVIDER)
+
+        provider_base_urls = {
+            "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
+            "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+            "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
+            "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+            "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+        }
+
+        if provider in provider_base_urls:
+            direct_url, env_key = provider_base_urls[provider]
+            api_key = os.environ.get(env_key)
+            if api_key:
+                base_url = direct_url
+            else:
+                base_url = settings.LITELLM_PROXY_URL
+                api_key = settings.LITELLM_API_KEY
+        else:
+            base_url = settings.LITELLM_PROXY_URL
+            api_key = settings.LITELLM_API_KEY
+
+        return LLMClient(proxy_url=base_url, api_key=api_key)

@@ -57,6 +57,7 @@ import {
   AuditOutlined,
   CodeOutlined,
   GithubOutlined,
+  TeamOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
@@ -78,6 +79,7 @@ const pageTitle = computed(() => {
     traces: 'LLM Trace',
     experiments: 'A/B 实验',
     evals: 'Eval 评估',
+    crews: 'Crew 团队',
     'code-review': '代码审查',
     'pr-bot': 'PR 机器人',
     analytics: '分析',
@@ -90,6 +92,7 @@ const menuItems = [
   { key: 'dashboard', icon: () => h(DashboardOutlined), label: 'Dashboard' },
   { key: 'workflows', icon: () => h(NodeIndexOutlined), label: '工作流' },
   { key: 'agents', icon: () => h(RobotOutlined), label: 'Agents' },
+  { key: 'crews', icon: () => h(TeamOutlined), label: 'Crew 团队' },
   { key: 'tools', icon: () => h(ToolOutlined), label: '工具' },
   { key: 'mcp', icon: () => h(ApiOutlined), label: 'MCP 管理' },
   { key: 'prompts', icon: () => h(FileTextOutlined), label: 'Prompts' },

@@ -11,6 +11,7 @@ class NodeType(str, Enum):
 
     START = "start"
     AGENT = "agent"
+    CREW = "crew"
     TOOL = "tool"
     HITL = "hitl"
     CONDITION = "condition"
