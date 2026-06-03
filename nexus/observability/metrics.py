@@ -100,6 +100,29 @@ LLM_TOKENS_TOTAL = Counter(
     ["model", "token_type"],
 )
 
+# ---------------------------------------------------------------------------
+# Semantic Cache 指标
+# ---------------------------------------------------------------------------
+
+CACHE_HITS_TOTAL = Counter(
+    "nexus_cache_hits_total",
+    "Total semantic cache hits",
+    ["model", "tenant_id"],
+)
+
+CACHE_MISSES_TOTAL = Counter(
+    "nexus_cache_misses_total",
+    "Total semantic cache misses",
+    ["model", "tenant_id"],
+)
+
+CACHE_LATENCY = Histogram(
+    "nexus_cache_latency_seconds",
+    "Semantic cache lookup latency",
+    ["model"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+)
+
 
 # ---------------------------------------------------------------------------
 # 便捷函数

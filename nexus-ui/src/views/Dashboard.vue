@@ -31,6 +31,38 @@
       </a-col>
     </a-row>
 
+    <!-- Phase 9: 缓存指标 -->
+    <a-row :gutter="16" style="margin-top: 16px">
+      <a-col :xs="12" :sm="12" :md="6">
+        <a-card>
+          <a-statistic title="缓存命中率" :value="stats.cache_hit_rate || 0" suffix="%" :value-style="{ color: '#52c41a' }">
+            <template #prefix><ThunderboltOutlined /></template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :sm="12" :md="6">
+        <a-card>
+          <a-statistic title="缓存命中次数" :value="stats.cache_hits || 0" :value-style="{ color: '#1677ff' }">
+            <template #prefix><CheckCircleOutlined /></template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :sm="12" :md="6">
+        <a-card>
+          <a-statistic title="缓存节省Token" :value="stats.cache_saved_tokens || 0" :value-style="{ color: '#fa8c16' }">
+            <template #prefix><SaveOutlined /></template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+      <a-col :xs="12" :sm="12" :md="6">
+        <a-card>
+          <a-statistic title="LLM调用次数" :value="stats.llm_calls || 0" :value-style="{ color: '#722ed1' }">
+            <template #prefix><MessageOutlined /></template>
+          </a-statistic>
+        </a-card>
+      </a-col>
+    </a-row>
+
     <a-row :gutter="16" style="margin-top: 16px">
       <a-col :xs="24" :md="12">
         <a-card title="执行状态分布">
@@ -89,6 +121,10 @@ import {
   PlayCircleOutlined,
   RobotOutlined,
   QuestionCircleOutlined,
+  ThunderboltOutlined,
+  CheckCircleOutlined,
+  SaveOutlined,
+  MessageOutlined,
 } from '@ant-design/icons-vue'
 import api from '@/api'
 import type { WorkflowRun } from '@/types'

@@ -25,6 +25,7 @@ class LLMResponse:
     """标准化的LLM响应.
 
     统一不同Provider（OpenAI / Anthropic / DeepSeek等）的响应格式。
+    Phase 9: 增加 cache_hit 标记语义缓存命中状态。
     """
 
     content: str = ""
@@ -33,6 +34,7 @@ class LLMResponse:
     model: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    cache_hit: bool = False
 
     @property
     def reasoning(self) -> str:
@@ -76,11 +78,20 @@ class LLMClient:
         proxy_url: Optional[str] = None,
         api_key: Optional[str] = None,
         timeout: float = 120.0,
+        cache_url: Optional[str] = None,
+        cache_api_key: Optional[str] = None,
+        cache_timeout: float = 5.0,
     ):
         self.proxy_url = proxy_url or settings.LITELLM_PROXY_URL
         self.api_key = api_key or settings.LITELLM_API_KEY
         self.timeout = timeout
+
+        # Phase 9: 语义缓存配置
+        self.cache_url = cache_url or getattr(settings, "SMART_CACHE_URL", "")
+        self.cache_api_key = cache_api_key or getattr(settings, "SMART_CACHE_API_KEY", None)
+        self.cache_timeout = cache_timeout
         self._client: Optional[httpx.AsyncClient] = None
+        self._cache_client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """获取HTTP客户端（懒加载）."""
@@ -94,6 +105,19 @@ class LLMClient:
                 headers=headers,
             )
         return self._client
+
+    async def _get_cache_client(self) -> httpx.AsyncClient:
+        """获取缓存服务HTTP客户端（懒加载）."""
+        if self._cache_client is None and self.cache_url:
+            headers = {"Content-Type": "application/json"}
+            if self.cache_api_key:
+                headers["X-API-Key"] = self.cache_api_key
+            self._cache_client = httpx.AsyncClient(
+                base_url=self.cache_url,
+                timeout=self.cache_timeout,
+                headers=headers,
+            )
+        return self._cache_client
 
     # ------------------------------------------------------------------
     # 响应解析
@@ -169,6 +193,50 @@ class LLMClient:
         )
 
     # ------------------------------------------------------------------
+    # 语义缓存查询 (Phase 9)
+    # ------------------------------------------------------------------
+
+    async def _query_semantic_cache(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        session_id: str,
+        temperature: float = 0.7,
+    ) -> tuple[bool, str]:
+        """查询语义缓存.
+
+        Returns:
+            (命中?, 响应内容)。未命中时返回 (False, "") 以便降级到正常 LLM 调用。
+        """
+        if not self.cache_url:
+            return False, ""
+
+        try:
+            client = await self._get_cache_client()
+            if client is None:
+                return False, ""
+
+            payload = {
+                "prompt": user_prompt,
+                "session_id": session_id,
+                "system_prompt": system_prompt,
+                "temperature": temperature,
+                "threshold": 0.92,
+            }
+
+            response = await client.post("/v1/llm/ask", json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("cached") is True:
+                return True, data.get("response", "")
+            return False, ""
+
+        except Exception:
+            # 缓存服务异常时静默降级，不阻塞主流程
+            return False, ""
+
+    # ------------------------------------------------------------------
     # 非流式调用
     # ------------------------------------------------------------------
 
@@ -182,12 +250,14 @@ class LLMClient:
         max_tokens: int = 4000,
         tools: Optional[list[dict]] = None,
         response_format: Optional[dict] = None,
+        enable_semantic_cache: bool = False,
+        session_id: str = "",
         **extra_params: Any,
     ) -> LLMResponse:
         """调用LLM（非流式）.
 
-        对应WAT BaseAgent._try_llm_call()。
-        真正解析LiteLLM Proxy的响应，返回标准化的LLMResponse。
+        Phase 9: 增加语义缓存自动拦截。当 enable_semantic_cache=True 时，
+        先查询 smart-cache；命中则直接返回，未命中才调用 LLM。
 
         Args:
             system_prompt: 系统提示词
@@ -198,11 +268,41 @@ class LLMClient:
             max_tokens: 最大token数
             tools: 可用工具列表（OpenAI格式）
             response_format: 响应格式（如 {"type": "json_object"}）
+            enable_semantic_cache: 是否启用语义缓存
+            session_id: 缓存会话ID（同一会话共享缓存空间）
             **extra_params: 额外参数透传给LiteLLM Proxy
 
         Returns:
             标准化的LLMResponse对象
         """
+        # Phase 9: 语义缓存拦截
+        # 当存在 tools 时跳过缓存（工具调用通常是有状态的，不适合缓存）
+        if enable_semantic_cache and session_id and not tools:
+            from nexus.observability.llm_tracer import trace_llm_call
+
+            cache_hit, cached_response = await self._query_semantic_cache(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                session_id=session_id,
+                temperature=temperature,
+            )
+            if cache_hit:
+                result = LLMResponse(
+                    content=cached_response,
+                    model=model,
+                    cache_hit=True,
+                )
+                # 记录 trace（命中时 latency ≈ 缓存查询耗时）
+                async with trace_llm_call(
+                    model=model,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    provider=provider,
+                ) as tracer:
+                    tracer.set_response(result)
+                return result
+
+        # 正常 LLM 调用
         client = await self._get_client()
 
         messages = []
@@ -265,16 +365,35 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 4000,
         tools: Optional[list[dict]] = None,
+        enable_semantic_cache: bool = False,
+        session_id: str = "",
         **extra_params: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
         """流式调用LLM.
 
-        通过SSE (Server-Sent Events) 逐块接收响应。
+        Phase 9: 增加语义缓存自动拦截。命中时模拟单块 SSE 返回。
         兼容OpenAI格式和LiteLLM Proxy的统一格式。
 
         Yields:
             LLMStreamChunk: 每个流式块包含增量内容、推理内容、tool_call等。
         """
+        # Phase 9: 语义缓存拦截（流式）
+        if enable_semantic_cache and session_id:
+            cache_hit, cached_response = await self._query_semantic_cache(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                session_id=session_id,
+                temperature=temperature,
+            )
+            if cache_hit:
+                yield LLMStreamChunk(
+                    content=cached_response,
+                    finish_reason="stop",
+                    model=model,
+                )
+                return
+
+        # 正常流式 LLM 调用
         client = await self._get_client()
 
         messages = []
@@ -390,6 +509,9 @@ class LLMClient:
         if self._client:
             await self._client.aclose()
             self._client = None
+        if self._cache_client:
+            await self._cache_client.aclose()
+            self._cache_client = None
 
     async def __aenter__(self) -> "LLMClient":
         """异步上下文管理器入口."""

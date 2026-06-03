@@ -37,6 +37,11 @@
             {{ record.latency_ms }}ms
           </span>
         </template>
+        <template v-if="column.key === 'cache_hit'">
+          <a-tag v-if="record.cache_hit === true" color="green">命中</a-tag>
+          <a-tag v-else-if="record.cache_hit === false" color="default">未命中</a-tag>
+          <span v-else>-</span>
+        </template>
         <template v-if="column.key === 'action'">
           <a-button type="link" @click="showDetail(record)">详情</a-button>
         </template>
@@ -55,6 +60,7 @@
           </a-descriptions-item>
           <a-descriptions-item label="Retry">{{ detail.retry_count }}</a-descriptions-item>
           <a-descriptions-item label="Fallback">{{ detail.fallback_model || '-' }}</a-descriptions-item>
+          <a-descriptions-item label="Cache Hit">{{ detail.cache_hit ? '是' : (detail.cache_hit === false ? '否' : '-') }}</a-descriptions-item>
         </a-descriptions>
 
         <a-divider />
@@ -105,6 +111,7 @@ const columns = [
   { title: 'Tokens', key: 'tokens' },
   { title: 'Latency', key: 'latency', width: 100 },
   { title: 'Retry', dataIndex: 'retry_count', width: 80 },
+  { title: 'Cache', key: 'cache_hit', width: 90 },
   { title: 'Time', dataIndex: 'created_at', width: 180 },
   { title: 'Action', key: 'action', width: 80 },
 ]

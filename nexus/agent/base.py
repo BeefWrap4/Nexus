@@ -18,7 +18,7 @@ from nexus.agent.memory import AgentMemory
 from nexus.agent.trust_model import TrustModel
 from nexus.config import settings
 from nexus.exceptions import LLMCallException, MaxIterationsReachedException
-from nexus.observability.llm_tracer import set_trace_context
+from nexus.observability.llm_tracer import get_trace_context, set_trace_context
 from nexus.prompts.resolver import PromptResolver
 from uuid import UUID
 
@@ -41,6 +41,7 @@ class AgentConfig:
     template_variables: dict[str, Any] = field(default_factory=dict)  # 模板变量
     tools: list[str] = field(default_factory=list)
     memory_enabled: bool = True
+    enable_semantic_cache: bool = False  # Phase 9: 语义缓存开关
 
 
 @dataclass
@@ -180,6 +181,10 @@ class BaseAgent:
             )
 
             # LLM调用（通过LiteLLM Proxy，携带 tools）
+            # Phase 9: 语义缓存 session_id 使用 trace context 中的 run_id
+            ctx = get_trace_context()
+            session_id = str(ctx.get("run_id", self.config.name))
+
             try:
                 async with self._LLM_SEMAPHORE:
                     response = await self.llm_client.call(
@@ -190,6 +195,8 @@ class BaseAgent:
                         temperature=self.config.temperature,
                         max_tokens=self.config.max_tokens,
                         tools=openai_tools if openai_tools else None,
+                        enable_semantic_cache=self.config.enable_semantic_cache,
+                        session_id=session_id,
                     )
             except Exception as e:
                 raise LLMCallException(str(e), self.config.provider)

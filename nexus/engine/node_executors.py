@@ -216,6 +216,7 @@ class AgentNodeExecutor(NodeExecutor):
             max_iterations=config.get("max_iterations", settings.DEFAULT_MAX_ITERATIONS),
             tools=tools_list,
             memory_enabled=settings.AGENT_MEMORY_ENABLED,
+            enable_semantic_cache=config.get("enable_semantic_cache", False),
         )
         agent = BaseAgent(
             config=agent_config,

@@ -83,6 +83,8 @@ class LLMTraceData:
     retry_count: int = 0
     fallback_model: str | None = None
 
+    cache_hit: bool = False
+
     raw_response: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_db_dict(self) -> dict[str, Any]:
@@ -110,6 +112,7 @@ class LLMTraceData:
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
             "fallback_model": self.fallback_model,
+            "cache_hit": self.cache_hit,
             "raw_response": self.raw_response if self.raw_response else None,
         }
 
@@ -165,6 +168,7 @@ async def trace_llm_call(
                 self.data.prompt_tokens = response.prompt_tokens
                 self.data.completion_tokens = response.completion_tokens
                 self.data.total_tokens = response.total_tokens
+                self.data.cache_hit = getattr(response, "cache_hit", False)
                 self.data.raw_response = response.raw if response.raw else {}
             elif isinstance(response, dict):
                 self.data.response_content = response.get("content", "")
@@ -215,6 +219,8 @@ def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
     """更新 Prometheus 指标."""
     try:
         from nexus.observability.metrics import (
+            CACHE_HITS_TOTAL,
+            CACHE_MISSES_TOTAL,
             LLM_CALLS_TOTAL,
             LLM_LATENCY,
             LLM_TOKENS_TOTAL,
@@ -222,28 +228,31 @@ def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
 
         status = "error" if trace_data.response_content.startswith("[ERROR]") else "success"
         tenant_id = trace_data.tenant_id or "default"
+        model = trace_data.model or "unknown"
 
-        LLM_CALLS_TOTAL.labels(
-            model=trace_data.model or "unknown",
-            status=status,
-            tenant_id=tenant_id,
-        ).inc()
+        # Cache metrics
+        if trace_data.cache_hit:
+            CACHE_HITS_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
+        else:
+            CACHE_MISSES_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
 
-        LLM_LATENCY.labels(model=trace_data.model or "unknown").observe(
-            trace_data.latency_ms / 1000.0
-        )
+        # LLM metrics — only count actual LLM calls (cache miss or error)
+        if not trace_data.cache_hit:
+            LLM_CALLS_TOTAL.labels(model=model, status=status, tenant_id=tenant_id).inc()
 
-        if trace_data.prompt_tokens > 0:
-            LLM_TOKENS_TOTAL.labels(
-                model=trace_data.model or "unknown",
-                token_type="prompt",
-            ).inc(trace_data.prompt_tokens)
+            LLM_LATENCY.labels(model=model).observe(trace_data.latency_ms / 1000.0)
 
-        if trace_data.completion_tokens > 0:
-            LLM_TOKENS_TOTAL.labels(
-                model=trace_data.model or "unknown",
-                token_type="completion",
-            ).inc(trace_data.completion_tokens)
+            if trace_data.prompt_tokens > 0:
+                LLM_TOKENS_TOTAL.labels(
+                    model=model,
+                    token_type="prompt",
+                ).inc(trace_data.prompt_tokens)
+
+            if trace_data.completion_tokens > 0:
+                LLM_TOKENS_TOTAL.labels(
+                    model=model,
+                    token_type="completion",
+                ).inc(trace_data.completion_tokens)
 
     except Exception:
         import logging

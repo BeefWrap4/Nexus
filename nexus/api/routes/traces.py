@@ -40,6 +40,7 @@ class LLMTraceOut(BaseModel):
     latency_ms: int
     retry_count: int
     fallback_model: str | None = None
+    cache_hit: bool | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
