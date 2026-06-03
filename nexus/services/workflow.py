@@ -41,7 +41,6 @@ class WorkflowService(BaseService[Workflow]):
         )
         session.add(version)
         await session.flush()
-        await session.commit()
         return workflow
 
     async def get_by_name(

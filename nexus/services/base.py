@@ -55,6 +55,7 @@ class BaseService(Generic[ModelType]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
+        await session.commit()
         return instance
 
     async def get(
@@ -153,6 +154,7 @@ class BaseService(Generic[ModelType]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
+        await session.commit()
         return instance
 
     async def delete(
@@ -177,4 +179,5 @@ class BaseService(Generic[ModelType]):
 
         await session.delete(instance)
         await session.flush()
+        await session.commit()
         return True
