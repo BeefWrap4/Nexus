@@ -43,11 +43,13 @@ class EvalService:
         self,
         session: AsyncSession,
         eval_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> EvalRun | None:
-        """根据 ID 获取评估运行."""
-        result = await session.execute(
-            select(EvalRun).where(EvalRun.id == str(eval_id))
-        )
+        """根据 ID 获取评估运行（可选租户过滤）."""
+        stmt = select(EvalRun).where(EvalRun.id == str(eval_id))
+        if tenant_id is not None:
+            stmt = stmt.where(EvalRun.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list(
@@ -69,11 +71,13 @@ class EvalService:
         self,
         session: AsyncSession,
         eval_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> bool:
-        """删除评估运行记录."""
-        result = await session.execute(
-            select(EvalRun).where(EvalRun.id == str(eval_id))
-        )
+        """删除评估运行记录（可选租户过滤）."""
+        stmt = select(EvalRun).where(EvalRun.id == str(eval_id))
+        if tenant_id is not None:
+            stmt = stmt.where(EvalRun.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         eval_run = result.scalar_one_or_none()
         if not eval_run:
             return False

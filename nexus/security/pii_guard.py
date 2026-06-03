@@ -21,8 +21,17 @@ class PIIFinding:
 class PIIGuard:
     """PII检测与脱敏.
 
+    @deprecated: PII检测功能尚未集成到业务流程中，保留以供后续 Phase 启用。
+
     检测并脱敏个人身份信息。
     """
+
+    def __init__(self):
+        """初始化 PIIGuard.
+
+        @deprecated: PII检测功能尚未集成到业务流程中，保留以供后续 Phase 启用。
+        """
+        pass
 
     PII_PATTERNS = {
         "email": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",

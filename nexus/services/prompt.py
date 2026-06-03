@@ -60,11 +60,13 @@ class PromptTemplateService:
         self,
         session: AsyncSession,
         template_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> PromptTemplate | None:
-        """根据 ID 获取 PromptTemplate."""
-        result = await session.execute(
-            select(PromptTemplate).where(PromptTemplate.id == str(template_id))
-        )
+        """根据 ID 获取 PromptTemplate（可选租户过滤）."""
+        stmt = select(PromptTemplate).where(PromptTemplate.id == str(template_id))
+        if tenant_id is not None:
+            stmt = stmt.where(PromptTemplate.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def list(
@@ -150,13 +152,20 @@ class PromptVersionService:
         self,
         session: AsyncSession,
         template_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> list[PromptTemplateVersion]:
-        """列出 PromptTemplate 的所有版本."""
-        result = await session.execute(
+        """列出 PromptTemplate 的所有版本（可选租户过滤）."""
+        stmt = (
             select(PromptTemplateVersion)
             .where(PromptTemplateVersion.template_id == str(template_id))
-            .order_by(desc(PromptTemplateVersion.version))
         )
+        if tenant_id is not None:
+            stmt = stmt.join(
+                PromptTemplate,
+                PromptTemplateVersion.template_id == PromptTemplate.id,
+            ).where(PromptTemplate.tenant_id == tenant_id)
+        stmt = stmt.order_by(desc(PromptTemplateVersion.version))
+        result = await session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_version(
@@ -220,24 +229,32 @@ class ExperimentService:
         self,
         session: AsyncSession,
         template_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> list[PromptExperiment]:
-        """列出 PromptTemplate 的所有实验."""
-        result = await session.execute(
+        """列出 PromptTemplate 的所有实验（可选租户过滤）."""
+        stmt = (
             select(PromptExperiment)
             .where(PromptExperiment.template_id == str(template_id))
-            .order_by(desc(PromptExperiment.created_at))
         )
+        if tenant_id is not None:
+            stmt = stmt.where(PromptExperiment.tenant_id == tenant_id)
+        stmt = stmt.order_by(desc(PromptExperiment.created_at))
+        result = await session.execute(stmt)
         return list(result.scalars().all())
 
     async def get(
         self,
         session: AsyncSession,
         experiment_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> PromptExperiment | None:
-        """根据 ID 获取实验."""
-        result = await session.execute(
-            select(PromptExperiment).where(PromptExperiment.id == str(experiment_id))
+        """根据 ID 获取实验（可选租户过滤）."""
+        stmt = select(PromptExperiment).where(
+            PromptExperiment.id == str(experiment_id)
         )
+        if tenant_id is not None:
+            stmt = stmt.where(PromptExperiment.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def update_status(
@@ -245,11 +262,15 @@ class ExperimentService:
         session: AsyncSession,
         experiment_id: UUID,
         status: str,
+        tenant_id: UUID | None = None,
     ) -> PromptExperiment | None:
-        """更新实验状态."""
-        result = await session.execute(
-            select(PromptExperiment).where(PromptExperiment.id == str(experiment_id))
+        """更新实验状态（可选租户过滤）."""
+        stmt = select(PromptExperiment).where(
+            PromptExperiment.id == str(experiment_id)
         )
+        if tenant_id is not None:
+            stmt = stmt.where(PromptExperiment.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         experiment = result.scalar_one_or_none()
         if not experiment:
             return None

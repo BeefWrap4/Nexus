@@ -120,6 +120,7 @@ class NodeRunService(BaseService[NodeRun]):
         wf_run_id: UUID,
         skip: int = 0,
         limit: int = 100,
+        tenant_id: UUID | None = None,
     ) -> tuple[list[NodeRun], int]:
         """获取执行实例的所有节点记录.
 
@@ -128,6 +129,7 @@ class NodeRunService(BaseService[NodeRun]):
             wf_run_id: 工作流执行实例ID
             skip: 偏移量
             limit: 每页数量
+            tenant_id: 租户ID（可选，通过 join WorkflowRun 验证归属）
 
         Returns:
             (节点记录列表, 总数量)
@@ -135,14 +137,23 @@ class NodeRunService(BaseService[NodeRun]):
         stmt = (
             select(NodeRun)
             .where(NodeRun.wf_run_id == wf_run_id)
-            .order_by(NodeRun.created_at)
-            .offset(skip)
-            .limit(limit)
         )
+        count_stmt = select(func.count()).select_from(NodeRun).where(
+            NodeRun.wf_run_id == wf_run_id
+        )
+
+        if tenant_id is not None:
+            stmt = stmt.join(
+                WorkflowRun, NodeRun.wf_run_id == WorkflowRun.id
+            ).where(WorkflowRun.tenant_id == tenant_id)
+            count_stmt = count_stmt.join(
+                WorkflowRun, NodeRun.wf_run_id == WorkflowRun.id
+            ).where(WorkflowRun.tenant_id == tenant_id)
+
+        stmt = stmt.order_by(NodeRun.created_at).offset(skip).limit(limit)
         result = await session.execute(stmt)
         items = list(result.scalars().all())
 
-        count_stmt = select(func.count()).where(NodeRun.wf_run_id == wf_run_id)
         count_result = await session.execute(count_stmt)
         total = count_result.scalar() or 0
 

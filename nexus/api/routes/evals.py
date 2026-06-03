@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_db_session
 from nexus.eval.runner import EvalRunner
 from nexus.security.auth import get_current_user
 from nexus.services.eval import EvalService
@@ -84,7 +84,8 @@ async def get_eval_run(
     current_user: Any = Depends(get_current_user),
 ):
     """获取评估运行详情（含结果）."""
-    eval_run = await eval_service.get(db, eval_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    eval_run = await eval_service.get(db, eval_id, tenant_id)
     if not eval_run:
         raise HTTPException(status_code=404, detail="Eval run not found")
     return eval_run
@@ -98,7 +99,8 @@ async def execute_eval(
     current_user: Any = Depends(get_current_user),
 ):
     """触发评估执行（后台异步执行）."""
-    eval_run = await eval_service.get(db, eval_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    eval_run = await eval_service.get(db, eval_id, tenant_id)
     if not eval_run:
         raise HTTPException(status_code=404, detail="Eval run not found")
 
@@ -114,7 +116,7 @@ async def execute_eval(
             pass
         await runner.run(eval_run, agent_config=agent_config)
         # 保存结果
-        async with get_db() as session:
+        async with get_db_session() as session:
             session.add(eval_run)
             await session.commit()
 
@@ -129,7 +131,8 @@ async def delete_eval_run(
     current_user: Any = Depends(get_current_user),
 ):
     """删除评估运行."""
-    ok = await eval_service.delete(db, eval_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    ok = await eval_service.delete(db, eval_id, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Eval run not found")
     return {"id": eval_id, "deleted": True}

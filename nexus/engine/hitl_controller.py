@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -20,6 +21,8 @@ from nexus.config import settings
 from nexus.db.database import get_db_session
 from nexus.engine.event_bus import EventBus
 from nexus.exceptions import HITLException, HITLTaskNotFoundException, HITLTimeoutException
+
+logger = logging.getLogger(__name__)
 
 
 class HITLType(str, Enum):
@@ -146,7 +149,7 @@ class HITLController:
                 session.add(db_task)
         except Exception:
             # DB 写入失败不阻塞（降级到纯内存模式）
-            pass
+            logger.error("Failed to persist HITL task %s to database", task.id, exc_info=True)
 
         # 2. 缓存到内存
         async with self._lock:
@@ -221,7 +224,8 @@ class HITLController:
             except HITLTaskNotFoundException:
                 raise
             except Exception:
-                pass  # DB 查询失败继续等待
+                logger.error("Failed to query HITL task %s from database", task_id, exc_info=True)
+                # DB 查询失败继续等待
 
         # 使用 EventBus 订阅等待响应
         response_event = asyncio.Event()
@@ -332,7 +336,8 @@ class HITLController:
                     db_task.response = response.__dict__
                     db_task.responded_at = datetime.now(timezone.utc)
         except Exception:
-            pass  # DB 更新失败不阻塞
+            logger.error("Failed to update HITL task %s in database", task_id, exc_info=True)
+            # DB 更新失败不阻塞
 
         # 6. 广播响应事件（跨进程：Worker 通过 Pub/Sub 收到后恢复）
         await self.event_bus.publish(
@@ -429,7 +434,7 @@ class HITLController:
                     db_task.response = task.response.__dict__
                     db_task.responded_at = datetime.now(timezone.utc)
         except Exception:
-            pass
+            logger.error("Failed to update cancelled HITL task %s in database", task_id, exc_info=True)
 
         # 广播取消事件
         await self.event_bus.publish(

@@ -119,7 +119,7 @@ async def get_run_logs(
 ):
     """获取执行日志."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    items, _ = await node_run_service.list_by_run(db, run_id)
+    items, _ = await node_run_service.list_by_run(db, run_id, tenant_id=tenant_id)
     return [
         {
             "id": str(n.id),

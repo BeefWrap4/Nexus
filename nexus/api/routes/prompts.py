@@ -140,7 +140,8 @@ async def get_prompt(
     current_user: Any = Depends(get_current_user),
 ):
     """获取 PromptTemplate（含当前版本内容）."""
-    template = await prompt_service.get(db, prompt_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    template = await prompt_service.get(db, prompt_id, tenant_id)
     if not template:
         raise HTTPException(status_code=404, detail="Prompt template not found")
     return template
@@ -154,7 +155,8 @@ async def get_prompt_content(
     current_user: Any = Depends(get_current_user),
 ):
     """获取 Prompt 内容（默认当前版本，可指定历史版本）."""
-    template = await prompt_service.get(db, prompt_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    template = await prompt_service.get(db, prompt_id, tenant_id)
     if not template:
         raise HTTPException(status_code=404, detail="Prompt template not found")
 
@@ -220,7 +222,8 @@ async def list_versions(
     current_user: Any = Depends(get_current_user),
 ):
     """列出所有版本历史."""
-    return await version_service.list_by_template(db, prompt_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    return await version_service.list_by_template(db, prompt_id, tenant_id)
 
 
 @router.get("/prompts/{prompt_id}/versions/{version_a}/diff/{version_b}", response_model=PromptDiffOut)
@@ -232,9 +235,10 @@ async def diff_versions(
     current_user: Any = Depends(get_current_user),
 ):
     """对比两个版本的差异（统一 diff 格式）."""
+    tenant_id = current_user.get("tenant_id", "default")
     versions = {
         v.version: v
-        for v in await version_service.list_by_template(db, prompt_id)
+        for v in await version_service.list_by_template(db, prompt_id, tenant_id)
     }
 
     if version_a not in versions or version_b not in versions:
@@ -268,8 +272,8 @@ async def create_experiment(
     """创建 Prompt A/B 实验."""
     tenant_id = current_user.get("tenant_id", "default")
 
-    # 验证 template 存在
-    template = await prompt_service.get(db, prompt_id)
+    # 验证 template 存在（同时验证租户归属）
+    template = await prompt_service.get(db, prompt_id, tenant_id)
     if not template:
         raise HTTPException(status_code=404, detail="Prompt template not found")
 
@@ -297,7 +301,8 @@ async def list_experiments(
     current_user: Any = Depends(get_current_user),
 ):
     """列出 PromptTemplate 的所有实验."""
-    return await experiment_service.list_by_template(db, prompt_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    return await experiment_service.list_by_template(db, prompt_id, tenant_id)
 
 
 @router.post("/experiments/{exp_id}/pause")
@@ -307,7 +312,8 @@ async def pause_experiment(
     current_user: Any = Depends(get_current_user),
 ):
     """暂停实验."""
-    experiment = await experiment_service.update_status(db, exp_id, "paused")
+    tenant_id = current_user.get("tenant_id", "default")
+    experiment = await experiment_service.update_status(db, exp_id, "paused", tenant_id)
     if not experiment:
         raise HTTPException(status_code=404, detail="Experiment not found")
     return {"id": exp_id, "status": "paused"}
@@ -320,7 +326,8 @@ async def resume_experiment(
     current_user: Any = Depends(get_current_user),
 ):
     """恢复实验."""
-    experiment = await experiment_service.update_status(db, exp_id, "running")
+    tenant_id = current_user.get("tenant_id", "default")
+    experiment = await experiment_service.update_status(db, exp_id, "running", tenant_id)
     if not experiment:
         raise HTTPException(status_code=404, detail="Experiment not found")
     return {"id": exp_id, "status": "running"}
@@ -333,7 +340,8 @@ async def get_experiment_results(
     current_user: Any = Depends(get_current_user),
 ):
     """获取实验结果汇总."""
-    experiment = await experiment_service.get(db, exp_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    experiment = await experiment_service.get(db, exp_id, tenant_id)
     if not experiment:
         raise HTTPException(status_code=404, detail="Experiment not found")
 

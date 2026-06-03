@@ -178,7 +178,7 @@ class EventBus:
                         await self._broadcast_local(event)
                     except (json.JSONDecodeError, Exception):
                         # 消息解析失败不阻塞
-                        pass
+                        logger.error("Failed to parse Redis Pub/Sub message", exc_info=True)
         except asyncio.CancelledError:
             logger.info("event_bus_redis_listener_cancelled")
             if self._pubsub:

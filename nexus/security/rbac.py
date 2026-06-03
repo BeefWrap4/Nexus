@@ -22,22 +22,59 @@ class RBACMiddleware(BaseHTTPMiddleware):
         self.permission_engine = permission_engine or PermissionEngine()
 
     async def dispatch(self, request: Request, call_next):
-        """处理请求."""
+        """处理请求，接入 PermissionEngine 进行权限验证."""
         # 跳过公开端点
-        if request.url.path in ["/health", "/docs", "/openapi.json"]:
+        PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/metrics"}
+        if request.url.path in PUBLIC_PATHS or request.url.path.startswith("/docs/"):
             return await call_next(request)
 
         # 获取用户信息
         user = getattr(request.state, "user", None)
         if not user:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required", "code": "UNAUTHORIZED"},
+            )
+
+        # 解析资源类型
+        resource_type = self._parse_resource_type(request.url.path)
+        if not resource_type:
+            # 无法识别的路径，放行（由业务路由自行处理）
             return await call_next(request)
 
-        # 检查权限（简化版）
-        # 生产环境应根据路由和方法动态检查
+        # 解析操作
+        action = self._parse_action(request.method)
+
+        # 构建权限字符串并验证
+        permission = f"{resource_type}:{action}"
         try:
-            return await call_next(request)
+            self.permission_engine.check_permission(user.role, permission)
         except PermissionDeniedException as e:
             return JSONResponse(
                 status_code=403,
                 content={"detail": str(e), "code": e.code},
             )
+
+        return await call_next(request)
+
+    @staticmethod
+    def _parse_resource_type(path: str) -> str | None:
+        """从请求路径解析资源类型."""
+        parts = path.strip("/").split("/")
+        KNOWN_RESOURCES = {"workflows", "agents", "tools", "crews", "runs", "hitl", "tenants"}
+        for part in parts:
+            if part in KNOWN_RESOURCES:
+                return part
+        return None
+
+    @staticmethod
+    def _parse_action(method: str) -> str:
+        """从 HTTP 方法解析操作."""
+        action_map = {
+            "GET": "read",
+            "POST": "write",
+            "PUT": "update",
+            "PATCH": "update",
+            "DELETE": "delete",
+        }
+        return action_map.get(method, "read")

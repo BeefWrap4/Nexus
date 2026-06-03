@@ -163,16 +163,8 @@ class AgentNodeExecutor(NodeExecutor):
         provider = config.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
         # 3. 创建 LLMClient 实例
-        provider_base_urls = {
-            "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-            "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
-            "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
-            "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-            "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
-        }
-
-        if provider in provider_base_urls:
-            direct_url, env_key = provider_base_urls[provider]
+        if provider in settings.PROVIDER_CONFIGS:
+            direct_url, env_key = settings.PROVIDER_CONFIGS[provider]
             api_key = os.environ.get(env_key)
             if api_key:
                 base_url = direct_url
@@ -853,16 +845,8 @@ class CrewNodeExecutor(NodeExecutor):
         """根据 Agent llm_settings 创建 LLMClient."""
         provider = llm_settings.get("provider", settings.DEFAULT_LLM_PROVIDER)
 
-        provider_base_urls = {
-            "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-            "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
-            "siliconflow": ("https://api.siliconflow.cn/v1", "SILICONFLOW_API_KEY"),
-            "dashscope": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
-            "zhipu": ("https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
-        }
-
-        if provider in provider_base_urls:
-            direct_url, env_key = provider_base_urls[provider]
+        if provider in settings.PROVIDER_CONFIGS:
+            direct_url, env_key = settings.PROVIDER_CONFIGS[provider]
             api_key = os.environ.get(env_key)
             if api_key:
                 base_url = direct_url

@@ -476,6 +476,8 @@ class LLMClient:
     ) -> LLMResponse:
         """带Fallback链的LLM调用.
 
+        @deprecated: 该方法尚未被调用，保留供后续 fallback 链功能使用。
+
         按models列表顺序依次尝试，直到成功。
 
         Args:
