@@ -1,20 +1,112 @@
 """认证服务.
 
 基于JWT Token + API Key双模式认证。
+
+API Key 格式: nexus_<prefix>_<secret>
+- prefix: 8位随机十六进制，用于数据库索引快速定位
+- secret: 32位随机URL-safe字符串
+- key_hash: HMAC-SHA256(SECRET_KEY, full_key)，存储于数据库
+- 验证流程: 提取prefix → 数据库索引查询 → HMAC比对 → 过期/撤销检查
 """
 
+import hashlib
+import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.config import settings
+from nexus.db.database import get_db
 from nexus.exceptions import AuthenticationException
+from nexus.models import APIKey, User
 
 # 安全scheme
 security = HTTPBearer(auto_error=False)
+
+
+# ---------------------------------------------------------------------------
+# API Key 工具函数
+# ---------------------------------------------------------------------------
+
+
+def _hash_api_key(api_key: str) -> str:
+    """使用 HMAC-SHA256 计算 API Key 的哈希.
+
+    使用 SECRET_KEY 作为密钥，即使数据库泄露也无法伪造有效 API Key。
+    """
+    return hmac.new(
+        settings.SECRET_KEY.encode(), api_key.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def _extract_key_prefix(api_key: str) -> str:
+    """从 API Key 中提取前缀（用于数据库索引查询）.
+
+    期望格式: nexus_<prefix>_<secret>
+    返回 prefix 部分（最多20字符），不符合格式时返回前20字符。
+    """
+    parts = api_key.split("_")
+    if len(parts) >= 2 and parts[0] == "nexus":
+        return parts[1][:20]
+    return api_key[:20]
+
+
+async def _verify_api_key(db: AsyncSession, api_key: str) -> Optional[APIKey]:
+    """验证 API Key（查询数据库）.
+
+    验证流程:
+    1. 提取 key_prefix，通过索引快速定位候选记录
+    2. 计算 HMAC-SHA256 hash，与数据库中的 key_hash 精确比对
+    3. 检查是否已过期（expires_at）
+    4. 检查是否已撤销（revoked_at）
+    5. 更新 last_used_at 时间戳
+
+    Args:
+        db: 数据库会话
+        api_key: 客户端传入的原始 API Key
+
+    Returns:
+        验证通过的 APIKey 记录，或 None
+    """
+    key_hash = _hash_api_key(api_key)
+    key_prefix = _extract_key_prefix(api_key)
+
+    # 通过 prefix + hash 双重匹配，确保安全性
+    stmt = (
+        select(APIKey)
+        .where(
+            APIKey.key_prefix == key_prefix,
+            APIKey.key_hash == key_hash,
+            APIKey.revoked_at.is_(None),
+        )
+    )
+    result = await db.execute(stmt)
+    key_record = result.scalar_one_or_none()
+
+    if not key_record:
+        return None
+
+    # 检查是否过期
+    now = datetime.now(timezone.utc)
+    if key_record.expires_at and key_record.expires_at.replace(tzinfo=timezone.utc) < now:
+        return None
+
+    # 更新最后使用时间（异步，不阻塞认证响应）
+    key_record.last_used_at = now
+    await db.commit()
+
+    return key_record
+
+
+# ---------------------------------------------------------------------------
+# AuthService
+# ---------------------------------------------------------------------------
 
 
 class AuthService:
@@ -66,35 +158,103 @@ class AuthService:
             raise AuthenticationException("Invalid token")
 
     @staticmethod
-    def verify_api_key(key_prefix: str, key_hash: str) -> bool:
-        """验证API Key（简化版）."""
-        # 生产环境应查询数据库验证
-        return True
+    def generate_api_key(
+        name: str = "Generated Key",
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        expires_days: Optional[int] = None,
+    ) -> tuple[str, str, str]:
+        """生成新的 API Key.
+
+        Returns:
+            (api_key, key_prefix, key_hash)
+            - api_key: 原始 API Key（仅显示一次，需安全保存）
+            - key_prefix: 前缀（用于索引）
+            - key_hash: HMAC-SHA256 哈希（存储于数据库）
+        """
+        prefix = secrets.token_hex(4)  # 8位十六进制前缀
+        secret = secrets.token_urlsafe(32)  # 32位随机字符串
+        api_key = f"nexus_{prefix}_{secret}"
+
+        key_prefix = prefix
+        key_hash = _hash_api_key(api_key)
+
+        return api_key, key_prefix, key_hash
+
+
+# ---------------------------------------------------------------------------
+# FastAPI 依赖
+# ---------------------------------------------------------------------------
 
 
 async def get_current_user(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
     """获取当前用户（FastAPI依赖）.
 
     支持两种认证方式：
     1. Bearer Token (JWT)
-    2. X-API-Key Header
+    2. X-API-Key Header（查数据库验证）
+
+    Args:
+        request: FastAPI 请求对象
+        db: 数据库会话（FastAPI 自动注入）
+        credentials: HTTP Bearer 凭证
+
+    Returns:
+        包含用户信息的 dict: {id, tenant_id, role, auth_type, permissions}
+
+    Raises:
+        HTTPException(401): 认证失败
     """
-    # 尝试API Key
+    # ------------------------------------------------------------------
+    # 方式1: API Key 认证
+    # ------------------------------------------------------------------
     api_key = request.headers.get("X-API-Key")
     if api_key:
-        # 验证API Key
-        # 生产环境应查询数据库
-        return {
-            "id": "api-key-user",
-            "tenant_id": "00000000-0000-0000-0000-000000000000",
-            "role": "member",
-            "auth_type": "api_key",
-        }
+        # 开发环境回退：配置的 DEV_API_KEY 直接通过（方便测试/文档）
+        if (
+            settings.DEV_API_KEY
+            and api_key == settings.DEV_API_KEY
+            and settings.ENVIRONMENT != "production"
+        ):
+            return {
+                "id": "dev-api-key-user",
+                "tenant_id": "default",
+                "role": "admin",
+                "auth_type": "api_key",
+                "permissions": ["*"],
+            }
 
-    # 尝试JWT Token
+        # 数据库验证
+        key_record = await _verify_api_key(db, api_key)
+        if key_record:
+            # 获取关联用户信息
+            user = None
+            if key_record.user_id:
+                stmt = select(User).where(User.id == key_record.user_id)
+                result = await db.execute(stmt)
+                user = result.scalar_one_or_none()
+
+            return {
+                "id": str(user.id) if user else "api-key-user",
+                "tenant_id": str(key_record.tenant_id),
+                "role": user.role if user else "member",
+                "auth_type": "api_key",
+                "permissions": key_record.permissions or [],
+            }
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # ------------------------------------------------------------------
+    # 方式2: JWT Token 认证
+    # ------------------------------------------------------------------
     if credentials:
         try:
             payload = AuthService.verify_token(credentials.credentials)

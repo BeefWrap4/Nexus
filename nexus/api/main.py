@@ -53,7 +53,78 @@ def _validate_production_security() -> None:
             "Set DATABASE_URL to a PostgreSQL instance."
         )
 
+    # 生产环境禁止 DEV_API_KEY
+    if settings.DEV_API_KEY:
+        raise RuntimeError(
+            "SECURITY ERROR: DEV_API_KEY must not be set in production. "
+            "Remove it from environment variables."
+        )
+
     logger.info("Production security validation passed")
+
+
+async def _ensure_dev_api_key() -> None:
+    """确保开发环境 DEV_API_KEY 在数据库中有对应记录.
+
+    当配置了 DEV_API_KEY 时，在数据库中创建或更新对应的 api_keys 记录，
+    使数据库验证路径也能正常工作（不依赖回退逻辑）。
+    """
+    import logging
+
+    from sqlalchemy import select
+
+    from nexus.db.database import AsyncSessionLocal
+    from nexus.models import APIKey, Tenant, User
+    from nexus.security.auth import _extract_key_prefix, _hash_api_key
+
+    logger = logging.getLogger(__name__)
+    dev_key = settings.DEV_API_KEY
+    if not dev_key:
+        return
+
+    async with AsyncSessionLocal() as session:
+        # 查找 default tenant
+        tenant_result = await session.execute(
+            select(Tenant).where(Tenant.slug == "default")
+        )
+        tenant = tenant_result.scalar_one_or_none()
+        if not tenant:
+            logger.warning("Default tenant not found, skipping dev API key setup")
+            return
+
+        # 查找 admin user
+        user_result = await session.execute(
+            select(User).where(User.tenant_id == tenant.id, User.role == "admin").limit(1)
+        )
+        user = user_result.scalar_one_or_none()
+
+        key_hash = _hash_api_key(dev_key)
+        key_prefix = _extract_key_prefix(dev_key)
+
+        # 检查是否已存在
+        existing = await session.execute(
+            select(APIKey).where(
+                APIKey.tenant_id == tenant.id,
+                APIKey.key_hash == key_hash,
+            )
+        )
+        if existing.scalar_one_or_none():
+            logger.debug("Dev API key already exists in database")
+            return
+
+        # 创建新的 dev API Key 记录
+        api_key = APIKey(
+            tenant_id=tenant.id,
+            user_id=user.id if user else None,
+            name="Development API Key (auto-generated)",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            permissions=["*"],
+            rate_limit=1000,
+        )
+        session.add(api_key)
+        await session.commit()
+        logger.info("Created dev API key record in database (prefix=%s)", key_prefix)
 
 
 @asynccontextmanager
@@ -74,6 +145,10 @@ async def lifespan(app: FastAPI):
     # 生产环境安全校验
     if settings.ENVIRONMENT == "production":
         _validate_production_security()
+
+    # 确保开发环境 API Key 在数据库中有记录（DEV_API_KEY 回退需要）
+    if settings.DEV_API_KEY and settings.ENVIRONMENT != "production":
+        await _ensure_dev_api_key()
 
     await init_arq_pool()
 

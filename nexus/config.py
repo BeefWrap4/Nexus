@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # 开发环境 API Key 回退（仅非 production 环境生效）
+    # 设置此值后，X-API-Key header 匹配时直接通过认证，不查数据库
+    # 生产环境必须留空，否则启动安全校验会报错
+    DEV_API_KEY: Optional[str] = Field(
+        default=None, validation_alias="DEV_API_KEY"
+    )
+
     # 数据库（开发用SQLite，生产环境通过环境变量覆盖为PostgreSQL）
     DATABASE_URL: str = Field(
         default="sqlite+aiosqlite:///./nexus.db",

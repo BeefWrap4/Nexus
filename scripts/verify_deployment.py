@@ -166,9 +166,29 @@ class DeploymentVerifier:
             return False, str(e)
 
     async def _login(self) -> bool:
-        """获取认证凭证（注册/登录或 X-API-Key 回退）."""
+        """获取认证凭证（注册/登录 或 X-API-Key / JWT 回退）."""
+        # 1) 优先尝试 X-API-Key（从环境变量或 .env 读取 DEV_API_KEY）
+        dev_api_key = os.environ.get("DEV_API_KEY", "")
+        if not dev_api_key:
+            env_path = Path.cwd() / ".env"
+            if env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("DEV_API_KEY="):
+                        dev_api_key = line.split("=", 1)[1].strip()
+                        break
+        if dev_api_key:
+            self._api_key = dev_api_key
+            # 测试 API Key 是否有效
+            resp = await self.client.get(
+                "/api/v1/agents/",
+                headers={"X-API-Key": self._api_key},
+            )
+            if resp.status_code in (200, 201, 204):
+                return True
+            self._api_key = None
+
+        # 2) 尝试注册/登录
         try:
-            # 尝试注册
             resp = await self.client.post(
                 "/api/v1/auth/register",
                 json={"email": "verify@nexus.local", "password": "verify123", "name": "Verifier"},
@@ -178,7 +198,6 @@ class DeploymentVerifier:
                 self._token = data.get("access_token") or data.get("token")
                 return True
 
-            # 如果用户已存在，尝试登录
             resp = await self.client.post(
                 "/api/v1/auth/login",
                 json={"email": "verify@nexus.local", "password": "verify123"},
@@ -190,7 +209,7 @@ class DeploymentVerifier:
         except Exception:
             pass
 
-        # 回退：使用种子数据的 JWT token（外键需要正确的 tenant_id）
+        # 3) 回退：使用种子数据的 JWT token
         env_path = Path.cwd() / ".env"
         secret_key = "your-secret-key-change-in-production"
         if env_path.exists():
@@ -618,9 +637,16 @@ def main() -> int:
         default=30.0,
         help="Request timeout in seconds (default: 30)",
     )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="X-API-Key for authentication (overrides DEV_API_KEY env var)",
+    )
     args = parser.parse_args()
 
     verifier = DeploymentVerifier(base_url=args.url, timeout=args.timeout)
+    if args.api_key:
+        verifier._api_key = args.api_key
     success = asyncio.run(verifier.verify_all())
     return 0 if success else 1
 
