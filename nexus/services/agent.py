@@ -81,4 +81,5 @@ class AgentService(BaseService[Agent]):
         session.add(agent)
         await session.flush()
         await session.refresh(agent)
+        await session.commit()
         return agent

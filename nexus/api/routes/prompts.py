@@ -106,7 +106,7 @@ async def create_prompt(
         created_by=user_id,
     )
     db.add(version)
-    await db.commit()
+    await db.commit()  # TODO: extract to PromptService
     await db.refresh(template)
     return template
 
@@ -211,7 +211,7 @@ async def update_prompt(
         db.add(version)
         template.current_version = new_version
 
-    await db.commit()
+    await db.commit()  # TODO: extract to PromptService
     await db.refresh(template)
     return template
 
@@ -231,7 +231,8 @@ async def delete_prompt(
         raise HTTPException(status_code=404, detail="Prompt template not found")
 
     await db.delete(template)
-    await db.commit()
+    await db.commit()  # TODO: extract to PromptService
+
     return {"id": prompt_id, "deleted": True}
 
 
@@ -351,7 +352,7 @@ async def create_experiment(
     if total_traffic != 100:
         raise HTTPException(status_code=400, detail=f"Traffic percentages must sum to 100, got {total_traffic}")
 
-    await db.commit()
+    await db.commit()  # TODO: extract to ExperimentService
     await db.refresh(experiment)
 
     # 加载 variants
@@ -397,7 +398,7 @@ async def pause_experiment(
         raise HTTPException(status_code=404, detail="Experiment not found")
 
     experiment.status = "paused"
-    await db.commit()
+
     return {"id": exp_id, "status": "paused"}
 
 

@@ -104,7 +104,7 @@ async def create_tool(
         },
         tenant_id=tenant_id,
     )
-    await db.commit()
+
     return _to_response(tool)
 
 
@@ -139,7 +139,7 @@ async def update_tool(
     )
     if not tool:
         raise HTTPException(status_code=404, detail="Tool not found")
-    await db.commit()
+
     return _to_response(tool)
 
 
@@ -154,7 +154,7 @@ async def delete_tool(
     ok = await tool_service.delete(db, tool_id, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Tool not found")
-    await db.commit()
+
     return None
 
 

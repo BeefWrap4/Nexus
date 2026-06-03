@@ -108,7 +108,7 @@ async def respond_to_hitl_task(
     )
     if not task:
         raise HTTPException(status_code=404, detail="HITL task not found")
-    await db.commit()
+
 
     # 广播 HITL 响应事件（跨进程：Worker 通过 Redis Pub/Sub 收到）
     event_bus = None

@@ -171,6 +171,7 @@ class CrewExecutionService:
                 worker_results=worker_results,
                 duration_ms=duration_ms,
             )
+            # Note: update_status already commits
 
             return {
                 "run_id": str(crew_run.id),
@@ -192,6 +193,7 @@ class CrewExecutionService:
                 worker_results=[{"error": str(exc)}],
                 duration_ms=duration_ms,
             )
+            # Note: update_status already commits
 
             raise
 

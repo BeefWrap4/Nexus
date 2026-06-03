@@ -67,7 +67,7 @@ async def create_eval_run(
         status="pending",
     )
     db.add(eval_run)
-    await db.commit()
+    await db.commit()  # TODO: extract to EvalService
     await db.refresh(eval_run)
     return eval_run
 
@@ -152,5 +152,5 @@ async def delete_eval_run(
         raise HTTPException(status_code=404, detail="Eval run not found")
 
     await db.delete(eval_run)
-    await db.commit()
+
     return {"id": eval_id, "deleted": True}

@@ -108,7 +108,7 @@ async def create_workflow(
         tenant_id=tenant_id,
         user_id=user_id,
     )
-    await db.commit()
+
     return _to_response(wf)
 
 
@@ -143,7 +143,7 @@ async def update_workflow(
     )
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    await db.commit()
+
     return _to_response(wf)
 
 
@@ -158,7 +158,7 @@ async def delete_workflow(
     ok = await workflow_service.delete(db, workflow_id, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    await db.commit()
+
     return None
 
 
@@ -181,7 +181,7 @@ async def trigger_workflow_run(
         trigger_payload=data.trigger_payload,
         trigger_type="api",
     )
-    await db.commit()
+
     return {
         "run_id": str(run.id),
         "workflow_id": str(workflow_id),
@@ -237,7 +237,7 @@ async def create_version(
         tenant_id=tenant_id,
         user_id=user_id,
     )
-    await db.commit()
+
     return {"version": ver.version, "workflow_id": str(workflow_id)}
 
 
@@ -284,7 +284,7 @@ async def clone_workflow(
         tenant_id=tenant_id,
         user_id=user_id,
     )
-    await db.commit()
+
     return {"new_workflow_id": str(new_wf.id), "source": str(workflow_id)}
 
 
@@ -325,18 +325,17 @@ async def schedule_workflow(
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    wf.schedule_cron = data.cron
+    update_data = {"schedule_cron": data.cron}
     # 设置定时任务后自动激活工作流
     if wf.status == "draft":
-        wf.status = "active"
+        update_data["status"] = "active"
 
-    db.add(wf)
-    await db.commit()
+    await workflow_service.update(db, workflow_id, update_data, tenant_id)
 
     return {
         "workflow_id": str(workflow_id),
         "schedule_cron": data.cron,
-        "status": wf.status,
+        "status": "active" if wf.status == "draft" else wf.status,
         "message": "Workflow scheduled successfully",
     }
 
@@ -354,9 +353,9 @@ async def unschedule_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     old_cron = wf.schedule_cron
-    wf.schedule_cron = None
-    db.add(wf)
-    await db.commit()
+    await workflow_service.update(
+        db, workflow_id, {"schedule_cron": None}, tenant_id
+    )
 
     return {
         "workflow_id": str(workflow_id),

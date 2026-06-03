@@ -81,6 +81,7 @@ class ToolService(BaseService[Tool]):
         session.add(tool)
         await session.flush()
         await session.refresh(tool)
+        await session.commit()
         return tool
 
     async def list_by_type(

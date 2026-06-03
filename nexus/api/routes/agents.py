@@ -93,7 +93,7 @@ async def create_agent(
         },
         tenant_id=tenant_id,
     )
-    await db.commit()
+
     return _to_response(agent)
 
 
@@ -128,7 +128,7 @@ async def update_agent(
     )
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    await db.commit()
+
     return _to_response(agent)
 
 
@@ -143,5 +143,5 @@ async def delete_agent(
     ok = await agent_service.delete(db, agent_id, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Agent not found")
-    await db.commit()
+
     return None

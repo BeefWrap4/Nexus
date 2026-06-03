@@ -61,7 +61,7 @@ async def cancel_run(
     run = await run_service.update_status(db, run_id, tenant_id, "cancelled")
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    await db.commit()
+
     return {"run_id": str(run.id), "status": run.status}
 
 
@@ -76,7 +76,7 @@ async def pause_run(
     run = await run_service.update_status(db, run_id, tenant_id, "paused")
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    await db.commit()
+
     return {"run_id": str(run.id), "status": run.status}
 
 
@@ -91,7 +91,7 @@ async def resume_run(
     run = await run_service.update_status(db, run_id, tenant_id, "running")
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    await db.commit()
+
     return {"run_id": str(run.id), "status": run.status}
 
 
@@ -106,7 +106,7 @@ async def retry_run(
     run = await run_service.update_status(db, run_id, tenant_id, "running")
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    await db.commit()
+
     return {"run_id": str(run.id), "status": run.status}
 
 

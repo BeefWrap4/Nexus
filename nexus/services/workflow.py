@@ -41,7 +41,7 @@ class WorkflowService(BaseService[Workflow]):
         )
         session.add(version)
         await session.flush()
-
+        await session.commit()
         return workflow
 
     async def get_by_name(
@@ -122,6 +122,7 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
             session.add(workflow)
             await session.flush()
 
+        await session.commit()
         return version
 
     async def list_by_workflow(
@@ -183,6 +184,7 @@ class WorkflowRunService(BaseService[WorkflowRun]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
+        await session.commit()
         return instance
 
     async def list(
@@ -216,6 +218,7 @@ class WorkflowRunService(BaseService[WorkflowRun]):
         session.add(run)
         await session.flush()
         await session.refresh(run)
+        await session.commit()
         return run
 
     async def list_by_workflow(

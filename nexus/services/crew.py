@@ -57,6 +57,7 @@ class CrewService(BaseService[Crew]):
             session.add(ca)
 
         await session.flush()
+        await session.commit()
         return crew
 
     async def get_with_agents(
@@ -138,6 +139,7 @@ class CrewService(BaseService[Crew]):
 
             await session.flush()
 
+        await session.commit()
         return crew
 
     async def delete(
@@ -203,6 +205,7 @@ class CrewRunService(BaseService[CrewRun]):
         session.add(run)
         await session.flush()
         await session.refresh(run)
+        await session.commit()
         return run
 
     async def list_by_crew(

@@ -163,7 +163,6 @@ async def create_crew(
         },
         tenant_id=tenant_id,
     )
-    await db.commit()
 
     crew_data = await crew_service.get_with_agents(db, crew.id, tenant_id)
     return _to_crew_response(crew_data)
@@ -207,7 +206,6 @@ async def update_crew(
     crew = await crew_service.update(db, crew_id, update_data, tenant_id)
     if not crew:
         raise HTTPException(status_code=404, detail="Crew not found")
-    await db.commit()
 
     crew_data = await crew_service.get_with_agents(db, crew.id, tenant_id)
     return _to_crew_response(crew_data)
@@ -224,7 +222,6 @@ async def delete_crew(
     ok = await crew_service.delete(db, crew_id, tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Crew not found")
-    await db.commit()
     return None
 
 
