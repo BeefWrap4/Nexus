@@ -51,7 +51,8 @@ class PromptTemplateService:
             created_by=user_id,
         )
         session.add(version)
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(template)
         return template
 
@@ -118,7 +119,8 @@ class PromptTemplateService:
             session.add(version)
             template.current_version = new_version
 
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(template)
         return template
 
@@ -136,7 +138,8 @@ class PromptTemplateService:
             return False
 
         await session.delete(template)
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return True
 
 
@@ -201,7 +204,8 @@ class ExperimentService:
             )
             session.add(variant)
 
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(experiment)
 
         # 加载 variants
@@ -251,6 +255,7 @@ class ExperimentService:
             return None
 
         experiment.status = status
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(experiment)
         return experiment

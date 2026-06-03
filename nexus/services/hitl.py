@@ -50,7 +50,7 @@ class HITLService(BaseService[HITLTask]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return instance
 
     async def list(
@@ -100,7 +100,7 @@ class HITLService(BaseService[HITLTask]):
         session.add(task)
         await session.flush()
         await session.refresh(task)
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return task
 
     async def assign(
@@ -129,7 +129,7 @@ class HITLService(BaseService[HITLTask]):
         session.add(task)
         await session.flush()
         await session.refresh(task)
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return task
 
     async def list_pending(

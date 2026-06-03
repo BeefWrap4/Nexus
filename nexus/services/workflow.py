@@ -131,8 +131,8 @@ class WorkflowVersionService(BaseService[WorkflowVersion]):
             workflow.current_version = version.version
             session.add(workflow)
             await session.flush()
+            # NOTE: 不在这里 commit，事务边界由调用方控制
 
-        await session.commit()
         return version
 
     async def list_by_workflow(
@@ -193,8 +193,8 @@ class WorkflowRunService(BaseService[WorkflowRun]):
         instance = WorkflowRun(**db_data)
         session.add(instance)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(instance)
-        await session.commit()
         return instance
 
     async def list(
@@ -227,8 +227,8 @@ class WorkflowRunService(BaseService[WorkflowRun]):
 
         session.add(run)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(run)
-        await session.commit()
         return run
 
     async def list_by_workflow(

@@ -87,8 +87,8 @@ class RunService(BaseService[WorkflowRun]):
         instance = WorkflowRun(**db_data)
         session.add(instance)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(instance)
-        await session.commit()
         return instance
 
     async def trigger(
@@ -262,8 +262,8 @@ class RunService(BaseService[WorkflowRun]):
 
         session.add(run)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(run)
-        await session.commit()
         return run
 
     async def delete(
@@ -304,8 +304,8 @@ class RunService(BaseService[WorkflowRun]):
         )
         session.add(node_run)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(node_run)
-        await session.commit()
         return node_run
 
     async def update_node_run(
@@ -347,8 +347,8 @@ class RunService(BaseService[WorkflowRun]):
 
         session.add(node_run)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(node_run)
-        await session.commit()
         return node_run
 
     async def list_node_runs(

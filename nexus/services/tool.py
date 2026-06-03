@@ -80,8 +80,8 @@ class ToolService(BaseService[Tool]):
         tool.status = status
         session.add(tool)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(tool)
-        await session.commit()
         return tool
 
     async def list_by_type(

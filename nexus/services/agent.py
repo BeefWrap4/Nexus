@@ -80,6 +80,6 @@ class AgentService(BaseService[Agent]):
         agent.tools = tools
         session.add(agent)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(agent)
-        await session.commit()
         return agent

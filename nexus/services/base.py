@@ -55,7 +55,7 @@ class BaseService(Generic[ModelType]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return instance
 
     async def get(
@@ -154,7 +154,7 @@ class BaseService(Generic[ModelType]):
         session.add(instance)
         await session.flush()
         await session.refresh(instance)
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return instance
 
     async def delete(
@@ -179,5 +179,5 @@ class BaseService(Generic[ModelType]):
 
         await session.delete(instance)
         await session.flush()
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return True

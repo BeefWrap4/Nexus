@@ -57,7 +57,7 @@ class CrewService(BaseService[Crew]):
             session.add(ca)
 
         await session.flush()
-        await session.commit()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return crew
 
     async def get_with_agents(
@@ -138,8 +138,8 @@ class CrewService(BaseService[Crew]):
                 session.add(ca)
 
             await session.flush()
+            # NOTE: 不在这里 commit，事务边界由调用方控制
 
-        await session.commit()
         return crew
 
     async def delete(
@@ -204,8 +204,8 @@ class CrewRunService(BaseService[CrewRun]):
 
         session.add(run)
         await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         await session.refresh(run)
-        await session.commit()
         return run
 
     async def list_by_crew(

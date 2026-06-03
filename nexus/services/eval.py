@@ -34,8 +34,9 @@ class EvalService:
             status="pending",
         )
         session.add(eval_run)
-        await session.commit()
+        await session.flush()
         await session.refresh(eval_run)
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return eval_run
 
     async def get(
@@ -78,5 +79,6 @@ class EvalService:
             return False
 
         await session.delete(eval_run)
-        await session.commit()
+        await session.flush()
+        # NOTE: 不在这里 commit，事务边界由调用方控制
         return True
