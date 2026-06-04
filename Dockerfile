@@ -103,14 +103,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装开发/测试依赖
-RUN pip install --no-cache-dir \
-    pytest>=8.0.0 \
-    pytest-asyncio>=0.23.0 \
-    pytest-cov>=4.1.0 \
-    black>=24.0.0 \
-    ruff>=0.3.0 \
-    mypy>=1.8.0 \
-    httpx>=0.27.0
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # 复制测试代码
 COPY --chown=nexus:nexus tests/ ./tests/

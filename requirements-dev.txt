@@ -1,0 +1,12 @@
+# NEXUS - development and test dependencies
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Quality gates
+black>=24.0.0
+ruff>=0.3.0
+mypy>=1.8.0
