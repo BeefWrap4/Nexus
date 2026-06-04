@@ -34,3 +34,9 @@ temp/
 # Local worktrees
 .worktrees/
 worktrees/
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_nexus.db
+temp_exceptions.py
