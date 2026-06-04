@@ -1,5 +1,7 @@
 """Workflow engine builder regression tests."""
 
+from pathlib import Path
+
 from nexus.engine.builder import build_engine_and_executors, create_engine_components
 from nexus.engine.enums import NodeType
 from nexus.engine.event_bus import EventBus
@@ -38,3 +40,15 @@ def test_create_engine_components_uses_injected_event_bus():
     created_event_bus, _, _, _, _ = create_engine_components(event_bus=event_bus)
 
     assert created_event_bus is event_bus
+
+
+def test_runtime_entrypoint_files_are_ascii():
+    repo_root = Path(__file__).resolve().parents[1]
+    files = [
+        repo_root / "nexus" / "engine" / "builder.py",
+        repo_root / "nexus" / "services" / "runner.py",
+        repo_root / "nexus" / "jobs" / "workflow.py",
+    ]
+
+    for path in files:
+        path.read_text(encoding="ascii")
