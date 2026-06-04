@@ -25,8 +25,21 @@
             <a-avatar style="background-color: #1677ff">U</a-avatar>
             <template #overlay>
               <a-menu>
-                <a-menu-item key="settings" @click="$router.push('/settings')">设置</a-menu-item>
-                <a-menu-item key="logout" @click="logout">退出</a-menu-item>
+                <a-menu-item key="settings" @click="$router.push('/settings')">{{ t('common.settings') }}</a-menu-item>
+                <a-menu-divider />
+                <a-menu-item key="language">
+                  <a-dropdown :trigger="['click']">
+                    <span>{{ t('layout.language') }}: {{ currentLocale === 'zh-CN' ? t('layout.chinese') : t('layout.english') }}</span>
+                    <template #overlay>
+                      <a-menu @click="handleLocaleChange">
+                        <a-menu-item key="zh-CN">{{ t('layout.chinese') }}</a-menu-item>
+                        <a-menu-item key="en-US">{{ t('layout.english') }}</a-menu-item>
+                      </a-menu>
+                    </template>
+                  </a-dropdown>
+                </a-menu-item>
+                <a-menu-divider />
+                <a-menu-item key="logout" @click="logout">{{ t('common.logout') }}</a-menu-item>
               </a-menu>
             </template>
           </a-dropdown>
@@ -40,8 +53,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   DashboardOutlined,
   NodeIndexOutlined,
@@ -57,63 +71,74 @@ import {
   AuditOutlined,
   CodeOutlined,
   GithubOutlined,
+  AppstoreOutlined,
   TeamOutlined,
+  BellOutlined,
+  DownOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
+const { locale, t } = useI18n()
 const collapsed = ref(false)
 const selectedKeys = computed(() => [route.path.split('/')[1] || 'dashboard'])
 const pendingHITLCount = ref(0)
+const currentLocale = ref(locale.value)
 
 const pageTitle = computed(() => {
   const titles: Record<string, string> = {
-    dashboard: 'Dashboard',
-    workflows: '工作流',
-    agents: 'Agents',
-    tools: '工具',
-    runs: '执行监控',
-    hitl: '审批任务',
-    mcp: 'MCP 管理',
-    prompts: 'Prompt 管理',
-    traces: 'LLM Trace',
-    experiments: 'A/B 实验',
-    evals: 'Eval 评估',
-    crews: 'Crew 团队',
-    'code-review': '代码审查',
-    'pr-bot': 'PR 机器人',
-    analytics: '分析',
-    settings: '设置',
+    dashboard: t('layout.dashboard'),
+    workflows: t('layout.workflows'),
+    agents: t('layout.agents'),
+    tools: t('layout.tools'),
+    runs: t('monitor.title'),
+    hitl: t('layout.approvalTasks'),
+    mcp: t('layout.mcpManagement'),
+    prompts: t('layout.prompts'),
+    traces: t('layout.traces'),
+    experiments: t('layout.experiments'),
+    evals: t('layout.eval'),
+    crews: t('layout.crews'),
+    'code-review': t('layout.codeReview'),
+    'pr-bot': t('layout.prBot'),
+    templates: t('layout.templateMarket'),
+    analytics: t('layout.analytics'),
+    settings: t('layout.settings'),
   }
   return titles[route.path.split('/')[1]] || 'NEXUS'
 })
 
 const menuItems = [
-  { key: 'dashboard', icon: () => h(DashboardOutlined), label: 'Dashboard' },
-  { key: 'workflows', icon: () => h(NodeIndexOutlined), label: '工作流' },
-  { key: 'agents', icon: () => h(RobotOutlined), label: 'Agents' },
-  { key: 'crews', icon: () => h(TeamOutlined), label: 'Crew 团队' },
-  { key: 'tools', icon: () => h(ToolOutlined), label: '工具' },
-  { key: 'mcp', icon: () => h(ApiOutlined), label: 'MCP 管理' },
-  { key: 'prompts', icon: () => h(FileTextOutlined), label: 'Prompts' },
-  { key: 'traces', icon: () => h(LineChartOutlined), label: 'Traces' },
-  { key: 'experiments', icon: () => h(ExperimentOutlined), label: '实验' },
-  { key: 'evals', icon: () => h(AuditOutlined), label: 'Eval' },
-  { key: 'code-review', icon: () => h(CodeOutlined), label: '代码审查' },
-  { key: 'pr-bot', icon: () => h(GithubOutlined), label: 'PR 机器人' },
-  { key: 'hitl', icon: () => h(QuestionCircleOutlined), label: '审批任务' },
-  { key: 'analytics', icon: () => h(BarChartOutlined), label: '分析' },
-  { key: 'settings', icon: () => h(SettingOutlined), label: '设置' },
+  { key: 'dashboard', icon: () => h(DashboardOutlined), label: t('layout.dashboard') },
+  { key: 'workflows', icon: () => h(NodeIndexOutlined), label: t('layout.workflows') },
+  { key: 'agents', icon: () => h(RobotOutlined), label: t('layout.agents') },
+  { key: 'crews', icon: () => h(TeamOutlined), label: t('layout.crews') },
+  { key: 'tools', icon: () => h(ToolOutlined), label: t('layout.tools') },
+  { key: 'mcp', icon: () => h(ApiOutlined), label: t('layout.mcpManagement') },
+  { key: 'prompts', icon: () => h(FileTextOutlined), label: t('layout.prompts') },
+  { key: 'traces', icon: () => h(LineChartOutlined), label: t('layout.traces') },
+  { key: 'experiments', icon: () => h(ExperimentOutlined), label: t('layout.experiments') },
+  { key: 'evals', icon: () => h(AuditOutlined), label: t('layout.eval') },
+  { key: 'code-review', icon: () => h(CodeOutlined), label: t('layout.codeReview') },
+  { key: 'pr-bot', icon: () => h(GithubOutlined), label: t('layout.prBot') },
+  { key: 'templates', icon: () => h(AppstoreOutlined), label: t('layout.templateMarket') },
+  { key: 'hitl', icon: () => h(QuestionCircleOutlined), label: t('layout.approvalTasks') },
+  { key: 'analytics', icon: () => h(BarChartOutlined), label: t('layout.analytics') },
+  { key: 'settings', icon: () => h(SettingOutlined), label: t('layout.settings') },
 ]
 
 function handleMenuClick({ key }: { key: string }) {
   router.push(`/${key}`)
 }
 
+function handleLocaleChange({ key }: { key: string }) {
+  locale.value = key
+  localStorage.setItem('locale', key)
+  currentLocale.value = key
+}
+
 function logout() {
   localStorage.removeItem('nexus_token')
   router.push('/login')
 }
-
-import { h } from 'vue'
 </script>

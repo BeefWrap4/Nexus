@@ -106,6 +106,12 @@ const routes = [
         component: () => import('@/views/PRBotConfig.vue'),
       },
       {
+        path: 'templates',
+        name: 'TemplateMarket',
+        component: () => import('@/views/TemplateMarket.vue'),
+        meta: { title: 'Template Market' },
+      },
+      {
         path: 'settings',
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
