@@ -218,9 +218,8 @@ async def _persist_trace(trace_data: LLMTraceData) -> None:
 def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
     """更新 Prometheus 指标."""
     try:
+        from nexus.observability.agent_metrics import record_llm_call, record_llm_retry
         from nexus.observability.metrics import (
-            CACHE_HITS_TOTAL,
-            CACHE_MISSES_TOTAL,
             LLM_CALLS_TOTAL,
             LLM_LATENCY,
             LLM_TOKENS_TOTAL,
@@ -229,15 +228,33 @@ def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
         status = "error" if trace_data.response_content.startswith("[ERROR]") else "success"
         tenant_id = trace_data.tenant_id or "default"
         model = trace_data.model or "unknown"
+        provider = trace_data.provider or "unknown"
 
-        # Cache metrics
+        # Cache metrics (deferred until metrics are uncommented)
         if trace_data.cache_hit:
-            CACHE_HITS_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
+            pass  # CACHE_HITS_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
         else:
-            CACHE_MISSES_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
+            pass  # CACHE_MISSES_TOTAL.labels(model=model, tenant_id=tenant_id).inc()
 
         # LLM metrics — only count actual LLM calls (cache miss or error)
         if not trace_data.cache_hit:
+            # 使用新的详细指标函数
+            record_llm_call(
+                provider=provider,
+                model=model,
+                status=status,
+                prompt_tokens=trace_data.prompt_tokens,
+                completion_tokens=trace_data.completion_tokens,
+                cost_usd=0.0,  # TODO: 从配置或API响应中计算成本
+                latency_seconds=trace_data.latency_ms / 1000.0,
+            )
+
+            # 记录重试次数
+            if trace_data.retry_count > 0:
+                for _ in range(trace_data.retry_count):
+                    record_llm_retry(provider=provider, model=model)
+
+            # 保留旧指标以保持向后兼容
             LLM_CALLS_TOTAL.labels(model=model, status=status, tenant_id=tenant_id).inc()
 
             LLM_LATENCY.labels(model=model).observe(trace_data.latency_ms / 1000.0)
