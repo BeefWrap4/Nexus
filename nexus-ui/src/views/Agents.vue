@@ -1,73 +1,94 @@
 <template>
-  <div>
-    <a-space style="margin-bottom: 16px">
-      <a-button type="primary" @click="openCreate">
-        <PlusOutlined /> 创建Agent
-      </a-button>
-      <a-button @click="fetchAgents"><ReloadOutlined /> 刷新</a-button>
-    </a-space>
+  <ErrorBoundary>
+    <div>
+      <a-space style="margin-bottom: 16px">
+        <a-button type="primary" @click="openCreate">
+          <PlusOutlined /> 创建Agent
+        </a-button>
+        <a-button @click="fetchAgents"><ReloadOutlined /> 刷新</a-button>
+      </a-space>
 
-    <a-row :gutter="16">
-      <a-col v-for="agent in agents" :key="agent.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom: 16px">
-        <a-card hoverable size="small">
-          <template #title>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span><RobotOutlined /> {{ agent.name }}</span>
-              <a-dropdown>
-                <a-button type="text" size="small"><EllipsisOutlined /></a-button>
-                <template #overlay>
-                  <a-menu>
-                    <a-menu-item key="edit" @click="openEdit(agent)">编辑</a-menu-item>
-                    <a-menu-item key="delete" danger @click="deleteAgent(agent.id)">删除</a-menu-item>
-                  </a-menu>
-                </template>
-              </a-dropdown>
-            </div>
+      <EmptyState v-if="!loading && agents.length === 0" description="暂无Agent">
+        <template #extra>
+          <a-button type="primary" @click="openCreate">
+            <PlusOutlined /> 创建第一个Agent
+          </a-button>
+        </template>
+      </EmptyState>
+
+      <DataTable
+        v-else
+        :columns="columns"
+        :data-source="agents"
+        :loading="loading"
+        row-key="id"
+        :pagination="{ pageSize: 10 }"
+        @refresh="fetchAgents"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'">
+            <a-space>
+              <RobotOutlined />
+              <span>{{ record.name }}</span>
+            </a-space>
           </template>
-          <p style="color: #666; font-size: 12px; margin: 0"><strong>角色:</strong> {{ agent.role }}</p>
-          <p style="color: #666; font-size: 12px; margin: 4px 0 0"><strong>目标:</strong> {{ agent.goal }}</p>
-          <p style="color: #999; font-size: 11px; margin: 8px 0 0">模型: {{ agent.model_config?.model || 'default' }}</p>
-        </a-card>
-      </a-col>
-    </a-row>
+          <template v-if="column.key === 'model'">
+            <a-tag>{{ record.model_config?.model || 'default' }}</a-tag>
+          </template>
+          <template v-if="column.key === 'status'">
+            <StatusBadge status="active" type="success" custom-text="运行中" />
+          </template>
+          <template v-if="column.key === 'action'">
+            <a-space>
+              <a-button size="small" @click="openEdit(record)">编辑</a-button>
+              <a-button size="small" danger @click="deleteAgent(record.id)">删除</a-button>
+            </a-space>
+          </template>
+        </template>
+      </DataTable>
 
-    <a-modal
-      v-model:open="modalOpen"
-      :title="isEdit ? '编辑Agent' : '创建Agent'"
-      :confirm-loading="saving"
-      @ok="saveAgent"
-    >
-      <a-form :model="form" layout="vertical">
-        <a-form-item label="名称" required>
-          <a-input v-model:value="form.name" placeholder="Agent名称" />
-        </a-form-item>
-        <a-form-item label="角色" required>
-          <a-input v-model:value="form.role" placeholder="如: 法务专家" />
-        </a-form-item>
-        <a-form-item label="目标" required>
-          <a-textarea v-model:value="form.goal" :rows="3" placeholder="描述该Agent的目标" />
-        </a-form-item>
-        <a-form-item label="模型">
-          <a-select v-model:value="form.model" placeholder="选择模型">
-            <a-select-option value="gpt-4o">GPT-4o</a-select-option>
-            <a-select-option value="gpt-4o-mini">GPT-4o Mini</a-select-option>
-            <a-select-option value="claude-3-sonnet">Claude 3 Sonnet</a-select-option>
-            <a-select-option value="glm-4">GLM-4</a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item label="温度">
-          <a-slider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-  </div>
+      <a-modal
+        v-model:open="modalOpen"
+        :title="isEdit ? '编辑Agent' : '创建Agent'"
+        :confirm-loading="saving"
+        @ok="saveAgent"
+      >
+        <a-form :model="form" layout="vertical">
+          <a-form-item label="名称" required>
+            <a-input v-model:value="form.name" placeholder="Agent名称" />
+          </a-form-item>
+          <a-form-item label="角色" required>
+            <a-input v-model:value="form.role" placeholder="如: 法务专家" />
+          </a-form-item>
+          <a-form-item label="目标" required>
+            <a-textarea v-model:value="form.goal" :rows="3" placeholder="描述该Agent的目标" />
+          </a-form-item>
+          <a-form-item label="模型">
+            <a-select v-model:value="form.model" placeholder="选择模型">
+              <a-select-option value="gpt-4o">GPT-4o</a-select-option>
+              <a-select-option value="gpt-4o-mini">GPT-4o Mini</a-select-option>
+              <a-select-option value="claude-3-sonnet">Claude 3 Sonnet</a-select-option>
+              <a-select-option value="glm-4">GLM-4</a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="温度">
+            <a-slider v-model:value="form.temperature" :min="0" :max="2" :step="0.1" />
+          </a-form-item>
+        </a-form>
+      </a-modal>
+    </div>
+  </ErrorBoundary>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined, ReloadOutlined, RobotOutlined, EllipsisOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, ReloadOutlined, RobotOutlined } from '@ant-design/icons-vue'
 import api from '@/api'
+import DataTable from '@/components/common/DataTable.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import type { Agent } from '@/types'
 
 const agents = ref<Agent[]>([])
@@ -84,6 +105,15 @@ const form = reactive({
   model: 'gpt-4o',
   temperature: 0.7,
 })
+
+const columns = [
+  { title: '名称', key: 'name' },
+  { title: '角色', dataIndex: 'role', key: 'role' },
+  { title: '目标', dataIndex: 'goal', key: 'goal' },
+  { title: '模型', key: 'model' },
+  { title: '状态', key: 'status' },
+  { title: '操作', key: 'action' },
+]
 
 async function fetchAgents() {
   loading.value = true

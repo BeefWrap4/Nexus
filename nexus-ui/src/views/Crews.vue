@@ -1,56 +1,75 @@
 <template>
-  <div>
-    <a-page-header title="Crew 团队" sub-title="多 Agent 协作编排">
-      <template #extra>
-        <a-button type="primary" @click="$router.push('/crews/new')">
-          <PlusOutlined /> 创建 Crew
-        </a-button>
-      </template>
-    </a-page-header>
+  <ErrorBoundary>
+    <div>
+      <a-page-header title="Crew 团队" sub-title="多 Agent 协作编排">
+        <template #extra>
+          <a-button type="primary" @click="$router.push('/crews/new')">
+            <PlusOutlined /> 创建 Crew
+          </a-button>
+        </template>
+      </a-page-header>
 
-    <a-row :gutter="16" style="margin-top: 16px">
-      <a-col v-for="crew in crews" :key="crew.id" :xs="24" :sm="12" :md="8" :lg="6" style="margin-bottom: 16px">
-        <a-card hoverable size="small">
-          <template #title>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <span><TeamOutlined /> {{ crew.name }}</span>
-              <a-dropdown>
-                <a-button type="text" size="small"><EllipsisOutlined /></a-button>
-                <template #overlay>
-                  <a-menu>
-                    <a-menu-item key="edit" @click="$router.push(`/crews/${crew.id}/edit`)">编辑</a-menu-item>
-                    <a-menu-item key="run" @click="openRunModal(crew)">执行</a-menu-item>
-                    <a-menu-item key="delete" danger @click="deleteCrew(crew.id)">删除</a-menu-item>
-                  </a-menu>
-                </template>
-              </a-dropdown>
-            </div>
+      <EmptyState v-if="!loading && crews.length === 0" description="暂无 Crew 团队">
+        <template #extra>
+          <a-button type="primary" @click="$router.push('/crews/new')">
+            <PlusOutlined /> 创建第一个Crew
+          </a-button>
+        </template>
+      </EmptyState>
+
+      <DataTable
+        v-else
+        :columns="columns"
+        :data-source="crews"
+        :loading="loading"
+        row-key="id"
+        :pagination="{ pageSize: 10 }"
+        style="margin-top: 16px"
+        @refresh="fetchCrews"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'">
+            <a-space>
+              <TeamOutlined />
+              <span>{{ record.name }}</span>
+            </a-space>
           </template>
-          <p style="color: #666; font-size: 12px; margin: 0"><strong>模式:</strong>
-            <a-tag :color="modeColor(crew.mode)">{{ modeLabel(crew.mode) }}</a-tag>
-          </p>
-          <p style="color: #666; font-size: 12px; margin: 4px 0 0"><strong>Agent 数:</strong> {{ crew.agents?.length || 0 }}</p>
-          <p style="color: #999; font-size: 11px; margin: 8px 0 0">{{ crew.description || '无描述' }}</p>
-        </a-card>
-      </a-col>
-    </a-row>
+          <template v-if="column.key === 'mode'">
+            <StatusBadge :status="record.mode" :show-icon="false" />
+          </template>
+          <template v-if="column.key === 'agent_count'">
+            <span>{{ record.agents?.length || 0 }}</span>
+          </template>
+          <template v-if="column.key === 'action'">
+            <a-space>
+              <a-button size="small" @click="$router.push(`/crews/${record.id}/edit`)">编辑</a-button>
+              <a-button size="small" @click="openRunModal(record)">执行</a-button>
+              <a-button size="small" danger @click="deleteCrew(record.id)">删除</a-button>
+            </a-space>
+          </template>
+        </template>
+      </DataTable>
 
-    <!-- Run Modal -->
-    <a-modal v-model:open="runModalOpen" title="执行 Crew" @ok="runCrew" :confirm-loading="running">
-      <a-form layout="vertical">
-        <a-form-item label="任务描述" required>
-          <a-textarea v-model:value="runTask" :rows="4" placeholder="输入需要 Crew 协作完成的任务..." />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-  </div>
+      <a-modal v-model:open="runModalOpen" title="执行 Crew" @ok="runCrew" :confirm-loading="running">
+        <a-form layout="vertical">
+          <a-form-item label="任务描述" required>
+            <a-textarea v-model:value="runTask" :rows="4" placeholder="输入需要 Crew 协作完成的任务..." />
+          </a-form-item>
+        </a-form>
+      </a-modal>
+    </div>
+  </ErrorBoundary>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
-import { PlusOutlined, TeamOutlined, EllipsisOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, TeamOutlined } from '@ant-design/icons-vue'
 import api from '@/api'
+import DataTable from '@/components/common/DataTable.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 
 interface Crew {
   id: string
@@ -67,23 +86,13 @@ const running = ref(false)
 const runTask = ref('')
 const runningCrewId = ref('')
 
-function modeLabel(mode: string) {
-  const labels: Record<string, string> = {
-    hierarchical: '层级',
-    sequential: '顺序',
-    parallel: '并行',
-  }
-  return labels[mode] || mode
-}
-
-function modeColor(mode: string) {
-  const colors: Record<string, string> = {
-    hierarchical: 'blue',
-    sequential: 'green',
-    parallel: 'purple',
-  }
-  return colors[mode] || 'default'
-}
+const columns = [
+  { title: '名称', key: 'name' },
+  { title: '描述', dataIndex: 'description', key: 'description' },
+  { title: '模式', key: 'mode' },
+  { title: 'Agent 数', key: 'agent_count' },
+  { title: '操作', key: 'action' },
+]
 
 async function fetchCrews() {
   loading.value = true

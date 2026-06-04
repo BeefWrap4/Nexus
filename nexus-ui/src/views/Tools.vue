@@ -1,77 +1,93 @@
 <template>
-  <div>
-    <a-space style="margin-bottom: 16px">
-      <a-button type="primary" @click="openRegister">
-        <PlusOutlined /> 注册工具
-      </a-button>
-      <a-button @click="fetchTools"><ReloadOutlined /> 刷新</a-button>
-    </a-space>
+  <ErrorBoundary>
+    <div>
+      <a-space style="margin-bottom: 16px">
+        <a-button type="primary" @click="openRegister">
+          <PlusOutlined /> 注册工具
+        </a-button>
+        <a-button @click="fetchTools"><ReloadOutlined /> 刷新</a-button>
+      </a-space>
 
-    <a-table :columns="columns" :dataSource="tools" rowKey="id" :loading="loading">
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'name'">
-          <a-space>
-            <span>{{ record.name }}</span>
-            <a-tag v-if="record.source === 'registry'" color="purple">RAG</a-tag>
-          </a-space>
-        </template>
-        <template v-if="column.key === 'status'">
-          <a-badge :status="record.status === 'active' ? 'success' : 'default'" :text="record.status === 'active' ? '启用' : '禁用'" />
-        </template>
-        <template v-if="column.key === 'action'">
-          <a-space>
-            <a-button size="small" @click="testTool(record)">测试</a-button>
-            <a-button v-if="record.source !== 'registry'" size="small" @click="openEdit(record)">编辑</a-button>
-            <a-button v-if="record.source !== 'registry'" size="small" danger @click="deleteTool(record.id)">删除</a-button>
-          </a-space>
-        </template>
-      </template>
-    </a-table>
+      <EmptyState v-if="!loading && tools.length === 0" description="暂无注册的工具" />
 
-    <a-modal
-      v-model:open="modalOpen"
-      :title="isEdit ? '编辑工具' : '注册工具'"
-      :confirm-loading="saving"
-      @ok="saveTool"
-    >
-      <a-form :model="form" layout="vertical">
-        <a-form-item label="名称" required>
-          <a-input v-model:value="form.name" placeholder="工具名称，如 query_database" />
-        </a-form-item>
-        <a-form-item label="描述" required>
-          <a-textarea v-model:value="form.description" :rows="2" placeholder="描述工具功能" />
-        </a-form-item>
-        <a-form-item label="类型" required>
-          <a-select v-model:value="form.type" placeholder="选择类型">
-            <a-select-option value="sql">SQL查询</a-select-option>
-            <a-select-option value="http">HTTP接口</a-select-option>
-            <a-select-option value="python">Python脚本</a-select-option>
-            <a-select-option value="llm">LLM调用</a-select-option>
-            <a-select-option value="custom">自定义</a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item label="配置(JSON)">
-          <a-textarea v-model:value="form.configJson" :rows="4" placeholder='{"url": "...", "method": "GET"}' />
-        </a-form-item>
-      </a-form>
-    </a-modal>
+      <DataTable
+        v-else
+        :columns="columns"
+        :data-source="tools"
+        :loading="loading"
+        row-key="id"
+        :pagination="{ pageSize: 10 }"
+        @refresh="fetchTools"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'name'">
+            <a-space>
+              <span>{{ record.name }}</span>
+              <a-tag v-if="record.source === 'registry'" color="purple">RAG</a-tag>
+            </a-space>
+          </template>
+          <template v-if="column.key === 'status'">
+            <StatusBadge
+              :status="record.status"
+              :type="record.status === 'active' ? 'success' : 'default'"
+              :custom-text="record.status === 'active' ? '启用' : '禁用'"
+            />
+          </template>
+          <template v-if="column.key === 'action'">
+            <a-space>
+              <a-button size="small" @click="testTool(record)">测试</a-button>
+              <a-button v-if="record.source !== 'registry'" size="small" @click="openEdit(record)">编辑</a-button>
+              <a-button v-if="record.source !== 'registry'" size="small" danger @click="deleteTool(record.id)">删除</a-button>
+            </a-space>
+          </template>
+        </template>
+      </DataTable>
 
-    <a-modal v-model:open="testModalOpen" title="测试工具" :footer="null" width="600">
-      <a-form layout="vertical">
-        <a-form-item label="输入参数(JSON)">
-          <a-textarea v-model:value="testInput" :rows="4" placeholder='{"query": "SELECT 1"}' />
-        </a-form-item>
-        <a-button type="primary" :loading="testing" @click="runTest">执行测试</a-button>
-      </a-form>
-      <a-divider />
-      <div v-if="testResult">
-        <h4>结果</h4>
-        <a-card size="small">
-          <pre class="result-block">{{ JSON.stringify(testResult, null, 2) }}</pre>
-        </a-card>
-      </div>
-    </a-modal>
-  </div>
+      <a-modal
+        v-model:open="modalOpen"
+        :title="isEdit ? '编辑工具' : '注册工具'"
+        :confirm-loading="saving"
+        @ok="saveTool"
+      >
+        <a-form :model="form" layout="vertical">
+          <a-form-item label="名称" required>
+            <a-input v-model:value="form.name" placeholder="工具名称，如 query_database" />
+          </a-form-item>
+          <a-form-item label="描述" required>
+            <a-textarea v-model:value="form.description" :rows="2" placeholder="描述工具功能" />
+          </a-form-item>
+          <a-form-item label="类型" required>
+            <a-select v-model:value="form.type" placeholder="选择类型">
+              <a-select-option value="sql">SQL查询</a-select-option>
+              <a-select-option value="http">HTTP接口</a-select-option>
+              <a-select-option value="python">Python脚本</a-select-option>
+              <a-select-option value="llm">LLM调用</a-select-option>
+              <a-select-option value="custom">自定义</a-select-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="配置(JSON)">
+            <a-textarea v-model:value="form.configJson" :rows="4" placeholder='{"url": "...", "method": "GET"}' />
+          </a-form-item>
+        </a-form>
+      </a-modal>
+
+      <a-modal v-model:open="testModalOpen" title="测试工具" :footer="null" width="600">
+        <a-form layout="vertical">
+          <a-form-item label="输入参数(JSON)">
+            <a-textarea v-model:value="testInput" :rows="4" placeholder='{"query": "SELECT 1"}' />
+          </a-form-item>
+          <a-button type="primary" :loading="testing" @click="runTest">执行测试</a-button>
+        </a-form>
+        <a-divider />
+        <div v-if="testResult">
+          <h4>结果</h4>
+          <a-card size="small">
+            <pre class="result-block">{{ JSON.stringify(testResult, null, 2) }}</pre>
+          </a-card>
+        </div>
+      </a-modal>
+    </div>
+  </ErrorBoundary>
 </template>
 
 <script setup lang="ts">
@@ -79,6 +95,10 @@ import { ref, reactive, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import api from '@/api'
+import DataTable from '@/components/common/DataTable.vue'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import type { Tool } from '@/types'
 
 const tools = ref<Tool[]>([])
