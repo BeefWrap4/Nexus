@@ -16,7 +16,7 @@ class TestTemplates:
 
     def test_code_reviewer_template(self):
         """Code Reviewer 模板结构正确."""
-        with open(self.TEMPLATES_DIR / "code_reviewer_v2.json") as f:
+        with open(self.TEMPLATES_DIR / "code-reviewer-v2.json") as f:
             tmpl = json.load(f)
         assert tmpl["type"] == "agent"
         assert "agent" in tmpl

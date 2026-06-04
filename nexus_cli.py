@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -289,6 +290,170 @@ def info():
     table.add_row("LITELLM_PROXY_URL", settings.LITELLM_PROXY_URL)
 
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Template Commands
+# ---------------------------------------------------------------------------
+template_app = typer.Typer(help="Agent模板管理命令")
+app.add_typer(template_app, name="template")
+
+
+@template_app.command("list")
+def template_list():
+    """列出所有可用的Agent模板."""
+    from nexus.templates import list_templates
+
+    templates = list_templates()
+    if not templates:
+        console.print("[yellow]No templates found.[/yellow]")
+        return
+
+    table = Table(title="Available Agent Templates")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Version")
+    table.add_column("Description")
+
+    for tmpl in templates:
+        table.add_row(
+            tmpl.get("name", "unknown"),
+            tmpl.get("type", "unknown"),
+            tmpl.get("version", "0.0.0"),
+            tmpl.get("description", "")[:60]
+        )
+    console.print(table)
+
+
+@template_app.command("show")
+def template_show(name: str = typer.Argument(..., help="模板名称")):
+    """显示模板详情."""
+    from nexus.templates import get_template
+
+    tmpl = get_template(name)
+    if not tmpl:
+        console.print(f"[red]Template '{name}' not found.[/red]")
+        raise typer.Exit(code=1)
+
+    console.print_json(json.dumps(tmpl, indent=2))
+
+
+@template_app.command("install")
+def template_install(name: str = typer.Argument(..., help="模板名称")):
+    """安装Agent模板到数据库."""
+    from nexus.templates import get_template
+    from nexus.db.database import AsyncSessionLocal
+    from nexus.models.agent import Agent
+    from nexus.models.workflow import Workflow
+
+    tmpl = get_template(name)
+    if not tmpl:
+        console.print(f"[red]Template '{name}' not found.[/red]")
+        raise typer.Exit(code=1)
+
+    async def _install():
+        async with AsyncSessionLocal() as session:
+            # 创建 Agent
+            if "agent" in tmpl:
+                agent_data = tmpl["agent"]
+                agent = Agent(
+                    name=agent_data.get("name", name),
+                    role=agent_data.get("role", ""),
+                    goal=agent_data.get("goal", ""),
+                    backstory=agent_data.get("backstory", ""),
+                    llm_settings={
+                        "provider": agent_data.get("provider", "deepseek"),
+                        "model": agent_data.get("model", "deepseek-chat"),
+                    },
+                    tools=agent_data.get("tools", []),
+                )
+                session.add(agent)
+                await session.commit()
+                console.print(f"[green]Agent '{agent.name}' installed.[/green]")
+
+            # 创建 Workflow
+            if "workflow" in tmpl:
+                wf_data = tmpl["workflow"]
+                workflow = Workflow(
+                    name=wf_data.get("name", f"{name}-workflow"),
+                    config={"nodes": wf_data.get("nodes", []), "edges": wf_data.get("edges", [])},
+                )
+                session.add(workflow)
+                await session.commit()
+                console.print(f"[green]Workflow '{workflow.name}' installed.[/green]")
+
+    asyncio.run(_install())
+
+
+# ---------------------------------------------------------------------------
+# Tool Commands
+# ---------------------------------------------------------------------------
+tool_app = typer.Typer(help="工具管理命令")
+app.add_typer(tool_app, name="tool")
+
+
+@tool_app.command("list")
+def tool_list():
+    """列出所有可用的工具连接器."""
+    from nexus.tools.connectors import __all__ as connector_names
+
+    table = Table(title="Available Tool Connectors")
+    table.add_column("Connector", style="cyan")
+    table.add_column("Factory Function", style="green")
+
+    connector_map = {
+        "create_http_tools": "HTTP Request (GET/POST/PUT/DELETE)",
+        "create_email_tool": "Email Sender (SMTP)",
+        "create_webhook_tool": "Webhook Caller",
+        "create_file_tools": "File Read/Write",
+        "create_json_tools": "JSON Query/Format",
+    }
+
+    for name in connector_names:
+        table.add_row(connector_map.get(name, name), name)
+    console.print(table)
+
+
+@tool_app.command("test")
+def tool_test(
+    tool_name: str = typer.Argument(..., help="工具名称 (http/email/webhook/file/json)"),
+):
+    """测试工具连接器是否正常工作."""
+    from nexus.tools.registry import ToolRegistry
+    from nexus.tools.connectors import (
+        create_http_tools, create_email_tool, create_webhook_tool,
+        create_file_tools, create_json_tools,
+    )
+
+    registry = ToolRegistry()
+
+    factory_map = {
+        "http": create_http_tools,
+        "email": create_email_tool,
+        "webhook": create_webhook_tool,
+        "file": create_file_tools,
+        "json": create_json_tools,
+    }
+
+    factory = factory_map.get(tool_name)
+    if not factory:
+        console.print(f"[red]Unknown tool: '{tool_name}'. Available: {', '.join(factory_map.keys())}[/red]")
+        raise typer.Exit(code=1)
+
+    factory(registry)
+    tools = list(registry._tools.values())
+
+    console.print(f"[green]Tool connector '{tool_name}' loaded successfully![/green]")
+    if tools:
+        table = Table(title=f"Registered Tools for '{tool_name}'")
+        table.add_column("Name", style="cyan")
+        table.add_column("Type", style="green")
+        table.add_column("Description")
+        for t in tools:
+            table.add_row(t.name, t.type.value if hasattr(t.type, 'value') else str(t.type), t.description[:60])
+        console.print(table)
+    else:
+        console.print(f"[yellow]No tools registered for '{tool_name}'.[/yellow]")
 
 
 if __name__ == "__main__":
