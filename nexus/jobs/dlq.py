@@ -89,17 +89,22 @@ async def record_dead_letter_job(
 async def retry_dead_letter_job(
     job_id: str,
     arq_pool=None,
+    *,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """手动重试死信队列中的任务.
 
     Args:
         job_id: 死信队列记录ID
         arq_pool: ARQ Redis 连接池
+        tenant_id: 租户ID（用于隔离校验，None 表示不做租户过滤）
 
     Returns:
         {"success": bool, "message": str}
     """
     from uuid import UUID
+
+    from sqlalchemy import select
 
     from nexus.jobs.pool import get_arq_pool
 
@@ -107,9 +112,9 @@ async def retry_dead_letter_job(
         arq_pool = get_arq_pool()
 
     async with get_db_session() as session:
-        from sqlalchemy import select
-
         stmt = select(DeadLetterJob).where(DeadLetterJob.id == UUID(job_id))
+        if tenant_id is not None:
+            stmt = stmt.where(DeadLetterJob.tenant_id == tenant_id)
         result = await session.execute(stmt)
         dlq_job = result.scalar_one_or_none()
 

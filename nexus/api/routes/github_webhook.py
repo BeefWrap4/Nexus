@@ -15,8 +15,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+import logging
+
+from nexus.config import settings
 from nexus.db.database import get_db_session
 from nexus.services.code_review import CodeReviewService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -69,12 +74,19 @@ async def github_webhook(
     if not owner or not repo_name or not pull_number:
         raise HTTPException(status_code=400, detail="Invalid PR payload")
 
-    # Trigger review via CodeReviewService (persistent run + ARQ enqueue)
-    # Note: Webhook has no authenticated user, use a default tenant
+    # Webhook 无认证用户，使用配置化的 tenant_id
+    webhook_tenant_id = settings.GITHUB_WEBHOOK_TENANT_ID
+    if not webhook_tenant_id:
+        logger.warning("GITHUB_WEBHOOK_TENANT_ID not configured, rejecting webhook")
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub webhook tenant not configured",
+        )
+
     async with get_db_session() as db:
         result = await code_review_service.submit_pr_review(
             db,
-            tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
+            tenant_id=UUID(webhook_tenant_id),
             owner=owner,
             repo=repo_name,
             pull_number=pull_number,

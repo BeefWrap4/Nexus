@@ -107,7 +107,8 @@ async def get_trace(
     current_user: Any = Depends(get_current_user),
 ):
     """获取单个 Trace 详情（含完整 prompt/response）."""
-    trace = await trace_service.get_trace(db, trace_id)
+    tenant_id = current_user.get("tenant_id", "default")
+    trace = await trace_service.get_trace(db, trace_id, tenant_id=tenant_id)
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
     return trace

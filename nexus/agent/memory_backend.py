@@ -101,10 +101,11 @@ class MemoryBackend(ABC):
 class InMemoryBackend(MemoryBackend):
     """内存后端 — 默认实现，向后兼容.
 
-    使用类级字典存储，同一进程内所有 Agent 实例共享。
+    每个实例持有独立的内存字典，避免跨实例状态污染。
     """
 
-    _store: dict[str, list[MemoryEntry]] = {}
+    def __init__(self):
+        self._store: dict[str, list[MemoryEntry]] = {}
 
     async def save(self, agent_id: str, entry: MemoryEntry) -> None:
         if agent_id not in self._store:

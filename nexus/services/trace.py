@@ -81,19 +81,22 @@ class TraceService(BaseService[LLMCallTrace]):
         self,
         session: AsyncSession,
         trace_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> LLMCallTrace | None:
         """根据 ID 获取 Trace 详情（含完整 prompt/response）.
 
         Args:
             session: 数据库会话
             trace_id: Trace ID
+            tenant_id: 租户ID（用于隔离校验）
 
         Returns:
             Trace 实例，不存在则返回 None
         """
-        result = await session.execute(
-            select(LLMCallTrace).where(LLMCallTrace.id == str(trace_id))
-        )
+        stmt = select(LLMCallTrace).where(LLMCallTrace.id == str(trace_id))
+        if tenant_id is not None:
+            stmt = stmt.where(LLMCallTrace.tenant_id == str(tenant_id))
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_summary(

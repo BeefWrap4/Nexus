@@ -62,8 +62,15 @@ class CrewNodeExecutor(NodeExecutor):
             if isinstance(crew_id, str):
                 crew_id = UUID(crew_id)
 
+            tenant_id = state.env_vars.get("tenant_id")
+
             async with AsyncSessionLocal() as session:
-                crew_record = await session.get(CrewModel, crew_id)
+                # 租户隔离：按 tenant_id 过滤 Crew 记录
+                crew_stmt = select(CrewModel).where(CrewModel.id == crew_id)
+                if tenant_id:
+                    crew_stmt = crew_stmt.where(CrewModel.tenant_id == UUID(tenant_id))
+                crew_result = await session.execute(crew_stmt)
+                crew_record = crew_result.scalar_one_or_none()
                 if not crew_record:
                     return NodeResult(
                         node_id=node.id,

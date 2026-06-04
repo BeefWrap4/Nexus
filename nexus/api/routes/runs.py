@@ -199,7 +199,8 @@ async def retry_dlq_job(
     """手动重试死信队列中的任务."""
     from nexus.jobs.dlq import retry_dead_letter_job
 
-    result = await retry_dead_letter_job(str(job_id))
+    tenant_id = current_user.get("tenant_id")
+    result = await retry_dead_letter_job(str(job_id), tenant_id=tenant_id)
 
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])

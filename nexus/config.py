@@ -158,6 +158,13 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------
+    # GitHub Webhook
+    # ------------------------------------------------------------------
+    GITHUB_WEBHOOK_TENANT_ID: Optional[str] = Field(
+        default=None, validation_alias="GITHUB_WEBHOOK_TENANT_ID"
+    )
+
+    # ------------------------------------------------------------------
     # MCP (Model Context Protocol)
     # ------------------------------------------------------------------
     MCP_SERVER_ENABLED: bool = Field(default=False, validation_alias="MCP_SERVER_ENABLED")
