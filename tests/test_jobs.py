@@ -9,6 +9,7 @@
 import pytest
 
 from nexus.jobs.config import WorkerSettings
+import nexus.jobs.pool as pool_module
 from nexus.jobs.pool import close_arq_pool, get_arq_pool, init_arq_pool
 from nexus.jobs.workflow import execute_workflow_job
 
@@ -54,6 +55,30 @@ class TestARQPool:
             assert get_arq_pool() is None
         except Exception as exc:
             pytest.skip(f"Redis not available: {exc}")
+
+    @pytest.mark.asyncio
+    async def test_close_arq_pool_uses_aclose(self, monkeypatch):
+        """close_arq_pool should use the non-deprecated async close API."""
+
+        class FakePool:
+            def __init__(self):
+                self.aclose_called = False
+                self.close_called = False
+
+            async def aclose(self):
+                self.aclose_called = True
+
+            async def close(self):
+                self.close_called = True
+
+        fake_pool = FakePool()
+        monkeypatch.setattr(pool_module, "_arq_pool", fake_pool)
+
+        await close_arq_pool()
+
+        assert fake_pool.aclose_called is True
+        assert fake_pool.close_called is False
+        assert pool_module._arq_pool is None
 
 
 class TestExecuteWorkflowJob:

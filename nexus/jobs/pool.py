@@ -35,7 +35,7 @@ async def close_arq_pool() -> None:
     """关闭全局 ARQ Redis 连接池."""
     global _arq_pool
     if _arq_pool is not None:
-        await _arq_pool.close()
+        await _arq_pool.aclose()
         _arq_pool = None
 
 
