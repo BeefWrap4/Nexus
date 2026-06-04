@@ -38,8 +38,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run backend regression tests
-        run: pytest tests/test_dependency_files.py tests/test_dependency_warnings.py tests/test_builder.py tests/test_workflow_engine.py tests/test_services.py tests/test_api.py tests/test_jobs.py -q
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov=nexus --cov-report=term-missing --cov-fail-under=60
 
   frontend:
     name: Frontend typecheck and build
@@ -58,6 +59,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Run lint
+        run: npm run lint
 
       - name: Type check
         run: npm run type-check
