@@ -178,10 +178,29 @@ class ToolRegistry:
         return self._audit_log[-limit:]
 
     def _check_permission(self, context: dict[str, Any], tool: Tool) -> bool:
-        """检查权限."""
-        # 简化版：所有已注册用户都有权限
-        # 生产环境应检查RBAC
-        return True
+        """检查权限 — 基于 PermissionEngine RBAC."""
+        from nexus.engine.permission_engine import PermissionEngine
+
+        engine = PermissionEngine()
+        user_role = context.get("user_role", "member")
+        user_id = context.get("user_id", "")
+        tenant_id = context.get("tenant_id", "")
+
+        # Admin 有全部权限
+        if engine.has_permission(user_role, "admin"):
+            return True
+
+        # 根据工具类型映射到对应权限
+        tool_type = tool.type.value if isinstance(tool.type, ToolType) else str(tool.type)
+        permission_map: dict[str, str] = {
+            "http": "tools:execute",
+            "python": "tools:execute",
+            "sql": "tools:execute",
+            "mcp": "tools:execute",
+        }
+        required_permission = permission_map.get(tool_type, "tools:execute")
+
+        return engine.has_permission(user_role, required_permission)
 
     def _validate_input(self, schema: dict[str, Any], params: dict[str, Any]) -> None:
         """校验输入参数."""
