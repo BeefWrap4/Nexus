@@ -34,11 +34,14 @@ Phase 10 增强:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from nexus.agent.base import AgentConfig, BaseAgent, Task
+
+logger = logging.getLogger(__name__)
 
 
 class CrewMode(str, Enum):
@@ -562,6 +565,7 @@ class Crew:
 
         except Exception:
             # 任何错误都 fallback
+            logger.warning("Task delegation failed, using equal distribution", exc_info=True)
             return [
                 CrewTask(description=task_description, assigned_to=name)
                 for name in self.workers.keys()
@@ -630,6 +634,7 @@ class Crew:
             )
         except Exception as e:
             # Fallback: 简单拼接
+            logger.warning("Manager aggregation failed, using simple concatenation", exc_info=True)
             combined = "\n\n".join(
                 f"## {r.worker_name}\n{r.output}" for r in worker_results if r.success
             )
@@ -683,4 +688,4 @@ class Crew:
             })
         except Exception:
             # 事件发布失败不应阻塞主流程
-            pass
+            logger.warning("EventBus publish failed for crew step '%s'", step, exc_info=True)

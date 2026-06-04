@@ -6,9 +6,13 @@
 - JWT Token验证
 """
 
+import logging
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from nexus.security.auth import AuthService
+
+logger = logging.getLogger(__name__)
 from nexus.engine.event_bus import EventBus
 
 router = APIRouter()
@@ -55,6 +59,7 @@ class ConnectionManager:
             try:
                 await ws.send_json(message)
             except Exception:
+                logger.debug("WebSocket send failed in broadcast_to_run", exc_info=True)
                 disconnected.append(ws)
 
         # 清理断开的连接
@@ -71,6 +76,7 @@ class ConnectionManager:
             try:
                 await ws.send_json(message)
             except Exception:
+                logger.debug("WebSocket send failed in send_to_user", exc_info=True)
                 disconnected.append(ws)
 
         for ws in disconnected:

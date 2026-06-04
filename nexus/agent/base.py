@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -21,6 +22,8 @@ from nexus.exceptions import LLMCallException, MaxIterationsReachedException
 from nexus.observability.llm_tracer import get_trace_context, set_trace_context
 from nexus.prompts.resolver import PromptResolver
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -208,6 +211,7 @@ class BaseAgent:
                     import json as _json
                     raw_response = _json.loads(raw_response)
                 except Exception:
+                    logger.debug("Response JSON parse failed, using raw text as content", exc_info=True)
                     raw_response = {"choices": [{"message": {"content": raw_response}}]}
             decision = self.decision_parser.parse(raw_response)
 
