@@ -1,0 +1,37 @@
+{
+  "name": "code-reviewer-v2",
+  "version": "2.0.0",
+  "type": "agent",
+  "description": "Enhanced code review agent with multi-language support, security scanning, and style checks",
+  "agent": {
+    "name": "CodeReviewer",
+    "role": "Senior Code Reviewer",
+    "goal": "Review code for bugs, security issues, and style problems",
+    "backstory": "You are an experienced software engineer specializing in code quality. You review PRs with a focus on correctness, security, and maintainability.",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "max_iterations": 5,
+    "tools": ["parse_diff", "detect_language", "security_check", "perf_check", "style_check", "read_file"],
+    "memory_enabled": true,
+    "enable_semantic_cache": true
+  },
+  "workflow": {
+    "name": "code-review-workflow",
+    "nodes": [
+      {"id": "start", "type": "start"},
+      {"id": "parse_diff", "type": "tool", "config": {"tool_name": "parse_diff"}},
+      {"id": "detect_lang", "type": "tool", "config": {"tool_name": "detect_language"}},
+      {"id": "review", "type": "agent", "config": {
+        "system_prompt": "Review this code diff for: 1) Security issues 2) Performance problems 3) Style violations. Focus on the changed code only.",
+        "agent_ref": "CodeReviewer"
+      }},
+      {"id": "end", "type": "end", "config": {"output": {"mappings": {"findings": "review.output.findings", "summary": "review.output.summary"}}}}
+    ],
+    "edges": [
+      {"source": "start", "target": "parse_diff"},
+      {"source": "parse_diff", "target": "detect_lang"},
+      {"source": "detect_lang", "target": "review"},
+      {"source": "review", "target": "end"}
+    ]
+  }
+}
