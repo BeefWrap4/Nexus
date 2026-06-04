@@ -252,6 +252,7 @@ class LLMClient:
         response_format: Optional[dict] = None,
         enable_semantic_cache: bool = False,
         session_id: str = "",
+        messages: Optional[list[dict]] = None,
         **extra_params: Any,
     ) -> LLMResponse:
         """调用LLM（非流式）.
@@ -270,14 +271,15 @@ class LLMClient:
             response_format: 响应格式（如 {"type": "json_object"}）
             enable_semantic_cache: 是否启用语义缓存
             session_id: 缓存会话ID（同一会话共享缓存空间）
+            messages: 预构建的消息列表（OpenAI格式）。若提供，则跳过 system_prompt/user_prompt 拼接。
             **extra_params: 额外参数透传给LiteLLM Proxy
 
         Returns:
             标准化的LLMResponse对象
         """
         # Phase 9: 语义缓存拦截
-        # 当存在 tools 时跳过缓存（工具调用通常是有状态的，不适合缓存）
-        if enable_semantic_cache and session_id and not tools:
+        # 当存在 tools 或预构建 messages 时跳过缓存
+        if enable_semantic_cache and session_id and not tools and not messages:
             from nexus.observability.llm_tracer import trace_llm_call
 
             cache_hit, cached_response = await self._query_semantic_cache(
@@ -305,14 +307,18 @@ class LLMClient:
         # 正常 LLM 调用
         client = await self._get_client()
 
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_prompt})
+        if messages is not None:
+            # 使用预构建的消息列表（多模态等场景）
+            built_messages = messages
+        else:
+            built_messages = []
+            if system_prompt:
+                built_messages.append({"role": "system", "content": system_prompt})
+            built_messages.append({"role": "user", "content": user_prompt})
 
         payload: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": built_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
@@ -367,6 +373,7 @@ class LLMClient:
         tools: Optional[list[dict]] = None,
         enable_semantic_cache: bool = False,
         session_id: str = "",
+        messages: Optional[list[dict]] = None,
         **extra_params: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
         """流式调用LLM.
@@ -378,7 +385,7 @@ class LLMClient:
             LLMStreamChunk: 每个流式块包含增量内容、推理内容、tool_call等。
         """
         # Phase 9: 语义缓存拦截（流式）
-        if enable_semantic_cache and session_id:
+        if enable_semantic_cache and session_id and not messages:
             cache_hit, cached_response = await self._query_semantic_cache(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -396,14 +403,18 @@ class LLMClient:
         # 正常流式 LLM 调用
         client = await self._get_client()
 
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_prompt})
+        if messages is not None:
+            # 使用预构建的消息列表（多模态等场景）
+            built_messages = messages
+        else:
+            built_messages = []
+            if system_prompt:
+                built_messages.append({"role": "system", "content": system_prompt})
+            built_messages.append({"role": "user", "content": user_prompt})
 
         payload: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": built_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,

@@ -11,14 +11,17 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any, Optional
 
 from nexus.agent.decision_parser import AgentDecision, DecisionParser
 from nexus.agent.llm_client import LLMClient
 from nexus.agent.memory import AgentMemory
+from nexus.agent.multimodal import MultiModalTask, build_multimodal_messages, is_vision_model
 from nexus.agent.trust_model import TrustModel
 from nexus.config import settings
 from nexus.exceptions import LLMCallException, MaxIterationsReachedException
+from nexus.observability.agent_metrics import record_agent_execution, AGENT_DECISION_LATENCY
 from nexus.observability.llm_tracer import get_trace_context, set_trace_context
 from nexus.prompts.resolver import PromptResolver
 from uuid import UUID
@@ -84,8 +87,16 @@ class BaseAgent:
     5. 返回结果
     """
 
-    # 全局LLM调用并发控制（复用WAT设计）
+    # 全局LLM调用并发控制（使用自适应控制器）
     _LLM_SEMAPHORE = asyncio.Semaphore(10)
+    _CONCURRENCY_CONTROLLER = None
+
+    @classmethod
+    def _get_semaphore(cls) -> asyncio.Semaphore:
+        """获取Semaphore，优先使用自适应控制器."""
+        if cls._CONCURRENCY_CONTROLLER is not None:
+            return cls._CONCURRENCY_CONTROLLER.semaphore
+        return cls._LLM_SEMAPHORE
 
     def __init__(
         self,
@@ -126,8 +137,29 @@ class BaseAgent:
             provider=self.config.provider,
         )
 
+        start_time = perf_counter()
         try:
-            return await self._execute_loop(task, ctx, tool_calls_log, observations)
+            result = await self._execute_loop(task, ctx, tool_calls_log, observations)
+            
+            # 记录Agent执行指标
+            duration_seconds = perf_counter() - start_time
+            record_agent_execution(
+                agent_name=self.config.name,
+                status=result.status,
+                duration_seconds=duration_seconds,
+            )
+            
+            return result
+        except Exception as e:
+            # 记录失败指标
+            duration_seconds = perf_counter() - start_time
+            status = "max_iterations_reached" if isinstance(e, MaxIterationsReachedException) else "failed"
+            record_agent_execution(
+                agent_name=self.config.name,
+                status=status,
+                duration_seconds=duration_seconds,
+            )
+            raise
         finally:
             from nexus.observability.llm_tracer import TRACE_CONTEXT
             TRACE_CONTEXT.reset(trace_token)
@@ -174,6 +206,9 @@ class BaseAgent:
         system_prompt = self._build_system_prompt(memories)
         openai_tools = self._get_openai_tools()
 
+        # 2a. 多模态消息预构建（仅首轮迭代使用）
+        mm_messages = self._build_messages(task, system_prompt, memories)
+
         # 3. ReAct模式循环
         for iteration in range(self.config.max_iterations):
             # 构建当前轮次的Prompt
@@ -189,18 +224,31 @@ class BaseAgent:
             session_id = str(ctx.get("run_id", self.config.name))
 
             try:
-                async with self._LLM_SEMAPHORE:
-                    response = await self.llm_client.call(
-                        system_prompt=system_prompt,
-                        user_prompt=prompt,
-                        model=self.config.model,
-                        provider=self.config.provider,
-                        temperature=self.config.temperature,
-                        max_tokens=self.config.max_tokens,
-                        tools=openai_tools if openai_tools else None,
-                        enable_semantic_cache=self.config.enable_semantic_cache,
-                        session_id=session_id,
-                    )
+                async with self._get_semaphore():
+                    # 多模态首轮：使用预构建的 messages
+                    if mm_messages is not None and iteration == 0:
+                        response = await self.llm_client.call(
+                            messages=mm_messages,
+                            system_prompt=system_prompt,
+                            user_prompt=prompt,
+                            model=self.config.model,
+                            provider=self.config.provider,
+                            temperature=self.config.temperature,
+                            max_tokens=self.config.max_tokens,
+                            tools=openai_tools if openai_tools else None,
+                        )
+                    else:
+                        response = await self.llm_client.call(
+                            system_prompt=system_prompt,
+                            user_prompt=prompt,
+                            model=self.config.model,
+                            provider=self.config.provider,
+                            temperature=self.config.temperature,
+                            max_tokens=self.config.max_tokens,
+                            tools=openai_tools if openai_tools else None,
+                            enable_semantic_cache=self.config.enable_semantic_cache,
+                            session_id=session_id,
+                        )
             except Exception as e:
                 raise LLMCallException(str(e), self.config.provider)
 
@@ -259,11 +307,25 @@ class BaseAgent:
                             "success": result.success,
                         })
                     except Exception as exc:
+                        # 工具执行失败，记录结构化错误
+                        from nexus.exceptions import NexusException, NexusErrorCode
+                        
+                        error_details = {
+                            "tool_name": decision.tool_name,
+                            "params": decision.tool_params,
+                            "error_type": type(exc).__name__,
+                        }
+                        
+                        # 如果已经是NexusException，保留其错误码
+                        if isinstance(exc, NexusException):
+                            error_details["code"] = exc.error_code.value if hasattr(exc, 'error_code') else None
+                        
                         obs_text = f"Tool '{decision.tool_name}' failed: {str(exc)}"
                         observations.append({
                             "tool": decision.tool_name,
                             "params": decision.tool_params,
                             "error": str(exc),
+                            "error_details": error_details,
                             "success": False,
                         })
                 else:
@@ -392,3 +454,22 @@ class BaseAgent:
         parts.append("What is your next action?")
 
         return "\n\n".join(parts)
+
+    def _build_messages(
+        self,
+        task: Task,
+        system_content: str,
+        memories: list[dict] | None = None,
+    ) -> list[dict] | None:
+        """构建消息列表（支持多模态）.
+
+        Returns:
+            消息列表（OpenAI格式），如果不是多模态任务则返回None（使用文本fallback）。
+        """
+        # 多模态支持
+        if isinstance(task, MultiModalTask) and task.media:
+            if is_vision_model(self.config.model):
+                return build_multimodal_messages(
+                    task, system_prompt=system_content, include_memory=memories
+                )
+        return None  # 使用现有文本流程
