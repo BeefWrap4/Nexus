@@ -21,19 +21,28 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { authApi } from '@/api'
 import { message } from 'ant-design-vue'
 
 const router = useRouter()
+const auth = useAuthStore()
 const loading = ref(false)
 const form = reactive({ email: '', password: '' })
 
 async function handleLogin() {
+  if (!form.email || !form.password) {
+    message.error('Please enter email and password')
+    return
+  }
   loading.value = true
   try {
-    // 简化版：模拟登录
-    localStorage.setItem('nexus_token', 'mock-token')
-    message.success('登录成功')
-    router.push('/')
+    const res = await authApi.login({ email: form.email, password: form.password })
+    auth.setToken(res.data.token)
+    message.success('Login successful')
+    router.push('/dashboard')
+  } catch (err: any) {
+    message.error(err.response?.data?.error?.message || 'Login failed')
   } finally {
     loading.value = false
   }

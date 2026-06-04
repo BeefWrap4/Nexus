@@ -132,9 +132,8 @@ export const analyticsApi = {
 
 // ==================== Auth API ====================
 export const authApi = {
-  login: (username: string, password: string) =>
-    api.post('/auth/login', { username, password }),
-  logout: () => api.post('/auth/logout'),
+  login: (data: { email: string; password: string }) =>
+    api.post('/auth/login', data),
   me: () => api.get('/auth/me'),
 }
 
