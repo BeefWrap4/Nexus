@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nexus.engine.enums import HITLStatus
 from nexus.models import HITLTask
 from nexus.services.base import BaseService
 
@@ -42,7 +43,7 @@ class HITLService(BaseService[HITLTask]):
         """
         db_data = dict(data)
         db_data["tenant_id"] = tenant_id
-        db_data["status"] = "pending"
+        db_data["status"] = HITLStatus.PENDING.value
         if user_id is not None and "assignee_id" not in db_data:
             db_data["assignee_id"] = user_id
 
@@ -88,11 +89,11 @@ class HITLService(BaseService[HITLTask]):
         if task is None:
             return None
 
-        if task.status != "pending":
+        if task.status != HITLStatus.PENDING.value:
             return task  # 已处理，幂等返回
 
         task.response = response
-        task.status = response.get("status", "approved")
+        task.status = response.get("status", HITLStatus.APPROVED.value)
         task.responded_at = datetime.now(timezone.utc)
         if assignee_id is not None:
             task.assignee_id = assignee_id
@@ -152,7 +153,7 @@ class HITLService(BaseService[HITLTask]):
         Returns:
             (任务列表, 总数量)
         """
-        filters: dict[str, Any] = {"status": "pending"}
+        filters: dict[str, Any] = {"status": HITLStatus.PENDING.value}
         if assignee_id is not None:
             filters["assignee_id"] = assignee_id
 

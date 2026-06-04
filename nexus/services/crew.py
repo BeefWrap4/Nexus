@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nexus.engine.enums import CrewRunStatus
 from nexus.models.crew import Crew, CrewAgent, CrewRun
 from nexus.models.agent import Agent
 from nexus.services.base import BaseService
@@ -169,7 +170,7 @@ class CrewRunService(BaseService[CrewRun]):
         data = {
             "crew_id": crew_id,
             "input_task": input_task,
-            "status": "pending",
+            "status": CrewRunStatus.PENDING.value,
         }
         return await super().create(session, data, tenant_id)
 
@@ -191,7 +192,7 @@ class CrewRunService(BaseService[CrewRun]):
             "worker_results": worker_results or [],
             "duration_ms": duration_ms,
         }
-        if status in ("completed", "failed"):
+        if status in (CrewRunStatus.COMPLETED.value, CrewRunStatus.FAILED.value):
             data["completed_at"] = datetime.now(timezone.utc)
 
         run = await session.get(CrewRun, run_id)

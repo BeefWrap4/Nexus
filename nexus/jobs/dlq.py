@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from nexus.db.database import get_db_session
+from nexus.engine.enums import DLQJobStatus
 from nexus.models.workflow import DeadLetterJob
 
 
@@ -65,7 +66,7 @@ async def record_dead_letter_job(
                     "job_try": job_try,
                 },
                 retry_count=job_try,
-                status="failed",
+                status=DLQJobStatus.FAILED.value,
                 failed_at=datetime.now(timezone.utc),
             )
             session.add(dlq_entry)
@@ -121,7 +122,7 @@ async def retry_dead_letter_job(
         if not dlq_job:
             return {"success": False, "message": "Dead letter job not found"}
 
-        if dlq_job.status == "retried":
+        if dlq_job.status == DLQJobStatus.RETRIED.value:
             return {"success": False, "message": "Job already retried"}
 
         payload = dlq_job.payload or {}
@@ -133,7 +134,7 @@ async def retry_dead_letter_job(
                 **kwargs,
             )
 
-        dlq_job.status = "retried"
+        dlq_job.status = DLQJobStatus.RETRIED.value
         dlq_job.retried_at = datetime.now(timezone.utc)
         session.add(dlq_job)
 
@@ -142,7 +143,7 @@ async def retry_dead_letter_job(
 
 async def list_dead_letter_jobs(
     tenant_id: str | None = None,
-    status: str = "failed",
+    status: str = DLQJobStatus.FAILED.value,
     skip: int = 0,
     limit: int = 100,
 ) -> tuple[list[DeadLetterJob], int]:

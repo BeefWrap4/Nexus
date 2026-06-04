@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from nexus.engine.enums import EvalRunStatus
 from nexus.models.eval import EvalRun
 
 
@@ -31,7 +32,7 @@ class EvalService:
             name=name,
             eval_type=eval_type,
             dataset=dataset,
-            status="pending",
+            status=EvalRunStatus.PENDING.value,
         )
         session.add(eval_run)
         await session.flush()

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
+from nexus.engine.enums import HITLStatus
 from nexus.engine.event_bus import EventBus
 from nexus.security.auth import get_current_user
 from nexus.services.hitl import HITLService
@@ -96,7 +97,7 @@ async def respond_to_hitl_task(
         "input_data": data.input_data,
         "correction": data.correction,
         "notes": data.notes,
-        "status": "approved" if data.approved else "rejected",
+        "status": HITLStatus.APPROVED.value if data.approved else HITLStatus.REJECTED.value,
     }
     task = await hitl_service.respond(
         db,

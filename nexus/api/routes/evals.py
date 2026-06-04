@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db, get_db_session
+from nexus.engine.enums import EvalRunStatus
 from nexus.eval.runner import EvalRunner
 from nexus.security.auth import get_current_user
 from nexus.services.eval import EvalService
@@ -104,7 +105,7 @@ async def execute_eval(
     if not eval_run:
         raise HTTPException(status_code=404, detail="Eval run not found")
 
-    if eval_run.status == "running":
+    if eval_run.status == EvalRunStatus.RUNNING.value:
         raise HTTPException(status_code=409, detail="Eval run already in progress")
 
     # 在后台执行评估

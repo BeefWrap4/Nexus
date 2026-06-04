@@ -19,10 +19,14 @@ from typing import Any, Optional
 
 from nexus.config import settings
 from nexus.db.database import get_db_session
+from nexus.engine.enums import HITLStatus
 from nexus.engine.event_bus import EventBus
 from nexus.exceptions import HITLException, HITLTaskNotFoundException, HITLTimeoutException
 
 logger = logging.getLogger(__name__)
+
+# Re-export for backward compatibility
+__all__ = ["HITLType", "HITLStatus"]
 
 
 class HITLType(str, Enum):
@@ -32,15 +36,6 @@ class HITLType(str, Enum):
     SELECT = "select"  # 多选一
     INPUT = "input"  # 补充信息
     CORRECT = "correct"  # 纠错修正
-
-
-class HITLStatus(str, Enum):
-    """审批状态."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    TIMEOUT = "timeout"
 
 
 @dataclass
@@ -143,7 +138,7 @@ class HITLController:
                     description=description,
                     context=context,
                     assignee_id=assignee_id,
-                    status="pending",
+                    status=HITLStatus.PENDING.value,
                     deadline=deadline,
                 )
                 session.add(db_task)
@@ -332,7 +327,7 @@ class HITLController:
                 result = await session.execute(stmt)
                 db_task = result.scalar_one_or_none()
                 if db_task:
-                    db_task.status = "approved" if response.approved else "rejected"
+                    db_task.status = HITLStatus.APPROVED.value if response.approved else HITLStatus.REJECTED.value
                     db_task.response = response.__dict__
                     db_task.responded_at = datetime.now(timezone.utc)
         except Exception:
@@ -430,7 +425,7 @@ class HITLController:
                 result = await session.execute(stmt)
                 db_task = result.scalar_one_or_none()
                 if db_task:
-                    db_task.status = "rejected"
+                    db_task.status = HITLStatus.REJECTED.value
                     db_task.response = task.response.__dict__
                     db_task.responded_at = datetime.now(timezone.utc)
         except Exception:

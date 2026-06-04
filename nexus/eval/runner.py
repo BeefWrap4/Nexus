@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from nexus.agent.base import AgentConfig, BaseAgent, Task
+from nexus.engine.enums import EvalRunStatus
 from nexus.eval.evaluators import EvalResult, create_evaluator
 from nexus.models.eval import EvalRun
 
@@ -36,12 +37,12 @@ class EvalRunner:
         Returns:
             汇总结果字典
         """
-        eval_run.status = "running"
+        eval_run.status = EvalRunStatus.RUNNING.value
 
         dataset = eval_run.dataset or []
         if not dataset:
             result = {
-                "status": "completed",
+                "status": EvalRunStatus.COMPLETED.value,
                 "total": 0,
                 "passed": 0,
                 "failed": 0,
@@ -49,7 +50,7 @@ class EvalRunner:
                 "details": [],
             }
             eval_run.results = result
-            eval_run.status = "completed"
+            eval_run.status = EvalRunStatus.COMPLETED.value
             return result
 
         # 创建 Evaluator
@@ -98,7 +99,7 @@ class EvalRunner:
 
         total = len(dataset)
         result = {
-            "status": "completed",
+            "status": EvalRunStatus.COMPLETED.value,
             "total": total,
             "passed": passed_count,
             "failed": total - passed_count,
@@ -108,5 +109,5 @@ class EvalRunner:
         }
 
         eval_run.results = result
-        eval_run.status = "completed"
+        eval_run.status = EvalRunStatus.COMPLETED.value
         return result

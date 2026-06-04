@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
+from nexus.engine.enums import DLQJobStatus, RunStatus
 from nexus.security.auth import get_current_user
 from nexus.services.run import RunService
 from nexus.services.node_run import NodeRunService
@@ -59,7 +60,7 @@ async def cancel_run(
 ):
     """取消执行."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    run = await run_service.update_status(db, run_id, tenant_id, "cancelled")
+    run = await run_service.update_status(db, run_id, tenant_id, RunStatus.CANCELLED.value)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -74,7 +75,7 @@ async def pause_run(
 ):
     """暂停执行."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    run = await run_service.update_status(db, run_id, tenant_id, "paused")
+    run = await run_service.update_status(db, run_id, tenant_id, RunStatus.PAUSED.value)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -89,7 +90,7 @@ async def resume_run(
 ):
     """恢复执行."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    run = await run_service.update_status(db, run_id, tenant_id, "running")
+    run = await run_service.update_status(db, run_id, tenant_id, RunStatus.RUNNING.value)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -104,7 +105,7 @@ async def retry_run(
 ):
     """重试失败节点."""
     tenant_id = UUID(current_user.get("tenant_id", "default"))
-    run = await run_service.update_status(db, run_id, tenant_id, "running")
+    run = await run_service.update_status(db, run_id, tenant_id, RunStatus.RUNNING.value)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
@@ -153,7 +154,7 @@ async def get_run_artifacts(
 
 @router.get("/dlq")
 async def list_dlq_jobs(
-    status: str = "failed",
+    status: str = DLQJobStatus.FAILED.value,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),

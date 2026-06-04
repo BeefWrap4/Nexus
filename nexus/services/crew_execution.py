@@ -20,6 +20,7 @@ from nexus.agent.base import AgentConfig, BaseAgent
 from nexus.agent.crew import Crew, CrewConfig, CrewMode
 from nexus.agent.llm_client import LLMClient
 from nexus.config import settings
+from nexus.engine.enums import CrewRunStatus
 from nexus.models.agent import Agent as AgentModel
 from nexus.services.crew import CrewRunService, CrewService
 
@@ -158,7 +159,7 @@ class CrewExecutionService:
             await self.crew_run_service.update_status(
                 session,
                 crew_run.id,
-                status="completed",
+                status=CrewRunStatus.COMPLETED.value,
                 output=result.output,
                 worker_results=worker_results,
                 duration_ms=duration_ms,
@@ -167,7 +168,7 @@ class CrewExecutionService:
 
             return {
                 "run_id": str(crew_run.id),
-                "status": "completed",
+                "status": CrewRunStatus.COMPLETED.value,
                 "output": result.output,
                 "worker_results": worker_results,
                 "duration_ms": duration_ms,
@@ -180,7 +181,7 @@ class CrewExecutionService:
             await self.crew_run_service.update_status(
                 session,
                 crew_run.id,
-                status="failed",
+                status=CrewRunStatus.FAILED.value,
                 output="",
                 worker_results=[{"error": str(exc)}],
                 duration_ms=duration_ms,

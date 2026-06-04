@@ -33,7 +33,7 @@ import logging
 import traceback
 from typing import Any, Awaitable, Callable
 
-from nexus.engine.enums import RunStatus
+from nexus.engine.enums import DLQJobStatus, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ async def _enqueue_dead_letter(
                 error_type=type(exc).__name__,
                 error_message=str(exc)[:2000],  # 限制长度
                 stack_trace=traceback.format_exc()[:4000],
-                status="pending",
+                status=DLQJobStatus.FAILED.value,
             )
             session.add(job)
             # get_db_session 上下文会自动 commit

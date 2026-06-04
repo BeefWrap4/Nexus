@@ -40,3 +40,38 @@ class RunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class HITLStatus(str, Enum):
+    """人工在环审批状态."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    TIMEOUT = "timeout"
+
+
+class CrewRunStatus(str, Enum):
+    """Crew 执行运行状态."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class EvalRunStatus(str, Enum):
+    """评估运行状态."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DLQJobStatus(str, Enum):
+    """死信队列任务状态."""
+
+    FAILED = "failed"
+    RETRIED = "retried"
+    DISCARDED = "discarded"
