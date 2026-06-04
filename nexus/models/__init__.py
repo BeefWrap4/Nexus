@@ -18,6 +18,7 @@ from nexus.models.eval import EvalRun
 from nexus.models.experiment import PromptExperiment, PromptExperimentVariant
 from nexus.models.llm_trace import LLMCallTrace
 from nexus.models.prompt import PromptTemplate, PromptTemplateVersion
+from nexus.models.billing import BillingSubscription, BillingUsageRecord
 
 __all__ = [
     "Workflow",
@@ -41,4 +42,6 @@ __all__ = [
     "PromptExperiment",
     "PromptExperimentVariant",
     "EvalRun",
+    "BillingSubscription",
+    "BillingUsageRecord",
 ]

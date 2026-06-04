@@ -102,3 +102,88 @@ class UsageMeter:
                 "max_crew_executions": plan.max_crew_executions,
             },
         }
+
+
+class DbUsageMeter(UsageMeter):
+    """可持久化的用量追踪器 — 写入 PostgreSQL."""
+
+    async def record_usage(self, tenant_id: str, metric: str, value: float = 1.0) -> UsageRecord:
+        """记录用量到数据库."""
+        from nexus.db.database import AsyncSessionLocal
+        from nexus.models.billing import BillingUsageRecord as BUR
+
+        async with AsyncSessionLocal() as session:
+            record = BUR(tenant_id=tenant_id, metric=metric, value=value)
+            session.add(record)
+            await session.commit()
+
+        # 也记录到内存（兼容性）
+        usage_record = UsageRecord(tenant_id=tenant_id, metric=metric, value=value)
+        self._records.append(usage_record)
+        return usage_record
+
+    async def get_usage(self, tenant_id: str, metric: str,
+                        since: datetime | None = None) -> float:
+        """从数据库查询累计用量."""
+        from nexus.db.database import AsyncSessionLocal
+        from nexus.models.billing import BillingUsageRecord as BUR
+        from sqlalchemy import select, func
+
+        if since is None:
+            since = datetime.now(timezone.utc) - timedelta(days=30)
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(func.sum(BUR.value)).where(
+                BUR.tenant_id == tenant_id,
+                BUR.metric == metric,
+                BUR.recorded_at >= since,
+            )
+            result = await session.execute(stmt)
+            total = result.scalar()
+            return float(total) if total is not None else 0.0
+
+    async def check_quota(self, tenant_id: str, metric: str,
+                          current_usage: float | None = None) -> tuple[bool, str]:
+        """检查配额是否超限（异步版本）."""
+        plan = self.get_plan(tenant_id)
+
+        quota_map = {
+            "llm_calls": plan.max_llm_calls_per_day,
+            "workflows": plan.max_workflows,
+            "tokens": plan.max_tokens_per_month,
+            "crew_executions": plan.max_crew_executions,
+        }
+
+        limit = quota_map.get(metric)
+        if limit is None:
+            return True, f"No quota for metric: {metric}"
+
+        usage = current_usage if current_usage is not None else await self.get_usage(tenant_id, metric)
+
+        if usage >= limit:
+            msg = f"Quota exceeded: {metric} ({usage}/{limit}) — upgrade to {self._next_tier_plan(tenant_id)}"
+            return False, msg
+
+        return True, f"OK: {usage}/{limit}"
+
+    async def get_usage_report(self, tenant_id: str) -> dict[str, Any]:
+        """生成用量报告（异步版本）."""
+        plan = self.get_plan(tenant_id)
+        return {
+            "tenant_id": tenant_id,
+            "plan": plan.name,
+            "price": f"${plan.price_usd}/mo",
+            "usage": {
+                "llm_calls_today": await self.get_usage(tenant_id, "llm_calls",
+                    since=datetime.now(timezone.utc) - timedelta(days=1)),
+                "workflows_this_month": await self.get_usage(tenant_id, "workflows"),
+                "tokens_this_month": int(await self.get_usage(tenant_id, "tokens")),
+                "crew_executions": await self.get_usage(tenant_id, "crew_executions"),
+            },
+            "limits": {
+                "max_llm_calls_per_day": plan.max_llm_calls_per_day,
+                "max_workflows": plan.max_workflows,
+                "max_tokens_per_month": plan.max_tokens_per_month,
+                "max_crew_executions": plan.max_crew_executions,
+            },
+        }
