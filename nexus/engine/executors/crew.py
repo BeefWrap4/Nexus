@@ -15,7 +15,7 @@ from nexus.db.database import AsyncSessionLocal
 from nexus.engine.executors.llm import create_llm_client
 from nexus.engine.enums import NodeStatus
 from nexus.engine.state_manager import WorkflowState
-from nexus.engine.workflow_engine import Node, NodeExecutor, NodeResult
+from nexus.engine.workflow_types import Node, NodeExecutor, NodeResult
 from nexus.models.agent import Agent as AgentModel
 from nexus.models.crew import Crew as CrewModel
 from nexus.models.crew import CrewAgent as CrewAgentModel

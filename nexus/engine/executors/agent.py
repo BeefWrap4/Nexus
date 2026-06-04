@@ -10,7 +10,7 @@ from nexus.config import settings
 from nexus.engine.executors.llm import create_llm_client
 from nexus.engine.enums import NodeStatus
 from nexus.engine.state_manager import WorkflowState
-from nexus.engine.workflow_engine import Node, NodeExecutor, NodeResult
+from nexus.engine.workflow_types import Node, NodeExecutor, NodeResult
 from nexus.observability.llm_tracer import TRACE_CONTEXT, set_trace_context
 
 

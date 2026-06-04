@@ -35,10 +35,12 @@ from nexus.engine.router_engine import RouterEngine
 from nexus.engine.state_manager import StateManager
 from nexus.engine.variable_pool import VariablePool
 from nexus.engine.workflow_engine import (
+    WorkflowEngine,
+)
+from nexus.engine.workflow_types import (
     Edge,
     Node,
     WorkflowDefinition,
-    WorkflowEngine,
 )
 
 

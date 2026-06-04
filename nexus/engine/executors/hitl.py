@@ -7,7 +7,7 @@ from typing import Any
 from nexus.engine.enums import NodeStatus, RunStatus
 from nexus.engine.hitl_controller import HITLController, HITLType
 from nexus.engine.state_manager import WorkflowState
-from nexus.engine.workflow_engine import Node, NodeExecutor, NodeResult
+from nexus.engine.workflow_types import Node, NodeExecutor, NodeResult
 
 
 class HITLNodeExecutor(NodeExecutor):
