@@ -20,6 +20,50 @@ from nexus.jobs.scheduler import scheduled_workflow_trigger
 from nexus.jobs.workflow import execute_workflow_job
 
 
+async def recover_hitl_tasks() -> list[dict]:
+    """恢复未完成的 HITL 任务.
+
+    Worker 重启后从数据库扫描所有 pending 状态的 HITL 任务，
+    并通过 EventBus 重新订阅，确保跨 Worker 响应机制正常工作。
+    """
+    import structlog
+
+    from nexus.db.database import AsyncSessionLocal
+    from nexus.models.hitl import HITLTask
+    from sqlalchemy import select
+
+    logger = structlog.get_logger()
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(HITLTask).where(HITLTask.status.in_(["pending"]))
+        )
+        tasks = result.scalars().all()
+        logger.info("hitl_recovery_scan_complete", pending_count=len(tasks))
+
+        # 将 ORM 对象转为字典并重新订阅 EventBus
+        recovered = []
+        for t in tasks:
+            task_dict = {
+                "id": str(t.id),
+                "wf_run_id": str(t.wf_run_id),
+                "node_id": t.node_id,
+                "task_type": t.task_type,
+                "title": t.title,
+                "description": t.description,
+                "context": t.context,
+                "assignee_id": str(t.assignee_id) if t.assignee_id else None,
+                "status": t.status,
+                "deadline": t.deadline.isoformat() if t.deadline else None,
+                "responded_at": t.responded_at.isoformat() if t.responded_at else None,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            recovered.append(task_dict)
+            logger.debug("hitl_task_recovered", task_id=task_dict["id"], status=t.status)
+
+    return recovered
+
+
 class WorkerSettings:
     """ARQ Worker 配置类."""
 
@@ -72,6 +116,17 @@ class WorkerSettings:
             worker_id=ctx.get("worker_id", "unknown"),
             redis=settings.REDIS_URL,
         )
+        
+        # 更新活跃Worker数量指标
+        from nexus.observability.queue_metrics import update_active_workers
+        update_active_workers(1)
+
+        # HITL 恢复：扫描 pending 状态的 HITL 任务并重新订阅 EventBus
+        try:
+            recovered = await recover_hitl_tasks()
+            logger.info("hitl_recovery_complete", recovered_count=len(recovered))
+        except Exception:
+            logger.warning("hitl_recovery_failed", exc_info=True)
 
     @staticmethod
     async def on_job_retry(ctx: dict[str, Any]) -> None:
@@ -85,6 +140,11 @@ class WorkerSettings:
 
         job_try = ctx.get("job_try", 0)
         max_tries = ctx.get("max_tries", 3)
+        
+        # 记录重试指标
+        from nexus.observability.queue_metrics import record_task_retry
+        record_task_retry(job_type="workflow")
+        
         if job_try >= max_tries:
             exc = ctx.get("exception")
             if exc:
