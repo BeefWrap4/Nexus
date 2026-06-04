@@ -1,0 +1,36 @@
+{
+  "name": "data-analyst",
+  "version": "1.0.0",
+  "type": "agent",
+  "description": "Data analysis agent that reads files, runs analysis, and generates reports",
+  "agent": {
+    "name": "DataAnalyst",
+    "role": "Data Analyst",
+    "goal": "Analyze data files and produce actionable insights",
+    "backstory": "You are a skilled data analyst who can read various file formats, perform statistical analysis, and generate clear reports with visualizations.",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "max_iterations": 10,
+    "tools": ["read_file", "write_file", "json_query", "json_format"],
+    "memory_enabled": true
+  },
+  "workflow": {
+    "name": "data-analysis-workflow",
+    "nodes": [
+      {"id": "start", "type": "start", "config": {"output_mapping": {"file_path": "file", "analysis_type": "type"}}},
+      {"id": "read_data", "type": "tool", "config": {"tool_name": "read_file"}},
+      {"id": "analyze", "type": "agent", "config": {
+        "system_prompt": "Analyze the data and provide: 1) Summary statistics 2) Key trends 3) Actionable recommendations. Be specific and data-driven.",
+        "agent_ref": "DataAnalyst"
+      }},
+      {"id": "save_report", "type": "tool", "config": {"tool_name": "write_file"}},
+      {"id": "end", "type": "end"}
+    ],
+    "edges": [
+      {"source": "start", "target": "read_data"},
+      {"source": "read_data", "target": "analyze"},
+      {"source": "analyze", "target": "save_report"},
+      {"source": "save_report", "target": "end"}
+    ]
+  }
+}

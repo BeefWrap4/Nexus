@@ -1,0 +1,74 @@
+{
+  "name": "customer-service",
+  "version": "1.0.0",
+  "type": "crew",
+  "description": "Multi-agent customer service team with triage, specialist, and supervisor roles",
+  "crew": {
+    "name": "CustomerServiceTeam",
+    "mode": "hierarchical",
+    "agents": [
+      {
+        "name": "TriageAgent",
+        "role": "Customer Service Triage",
+        "goal": "Classify incoming customer requests and route to appropriate specialist",
+        "backstory": "You are the first point of contact. You quickly understand customer needs and categorize them correctly.",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "tools": ["json_query", "json_format"]
+      },
+      {
+        "name": "TechnicalSpecialist",
+        "role": "Technical Support Specialist",
+        "goal": "Solve technical problems with clear, step-by-step guidance",
+        "backstory": "You are an expert at debugging technical issues. You provide clear, actionable solutions.",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "tools": ["read_file", "http_request"]
+      },
+      {
+        "name": "BillingSpecialist",
+        "role": "Billing & Account Specialist",
+        "goal": "Resolve billing inquiries and account issues accurately",
+        "backstory": "You handle billing questions with precision and empathy. You understand subscription models and payment systems.",
+        "provider": "deepseek",
+        "model": "deepseek-chat"
+      },
+      {
+        "name": "Supervisor",
+        "role": "Customer Service Supervisor",
+        "goal": "Coordinate the team, ensure quality responses, and handle escalations",
+        "backstory": "You oversee the customer service team, ensuring every customer gets accurate and helpful responses.",
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "tools": ["send_email", "json_format"]
+      }
+    ],
+    "manager": "Supervisor"
+  },
+  "workflow": {
+    "name": "cs-workflow",
+    "nodes": [
+      {"id": "start", "type": "start", "config": {"output_mapping": {"query": "message", "customer_id": "user_id"}}},
+      {"id": "triage", "type": "agent", "config": {"agent_ref": "TriageAgent"}},
+      {"id": "condition", "type": "condition", "config": {
+        "conditions": [
+          {"expression": "run.category == 'technical'", "branch_id": "tech"},
+          {"expression": "run.category == 'billing'", "branch_id": "billing"}
+        ],
+        "default_branch": "general"
+      }},
+      {"id": "tech_support", "type": "agent", "config": {"agent_ref": "TechnicalSpecialist"}},
+      {"id": "billing_support", "type": "agent", "config": {"agent_ref": "BillingSpecialist"}},
+      {"id": "end", "type": "end"}
+    ],
+    "edges": [
+      {"source": "start", "target": "triage"},
+      {"source": "triage", "target": "condition"},
+      {"source": "condition", "target": "tech_support", "condition": "run.category == 'technical'"},
+      {"source": "condition", "target": "billing_support", "condition": "run.category == 'billing'"},
+      {"source": "condition", "target": "end", "condition": "default"},
+      {"source": "tech_support", "target": "end"},
+      {"source": "billing_support", "target": "end"}
+    ]
+  }
+}
