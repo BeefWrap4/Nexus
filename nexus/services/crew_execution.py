@@ -165,7 +165,7 @@ class CrewExecutionService:
                 worker_results=worker_results,
                 duration_ms=duration_ms,
             )
-            # Note: update_status already commits
+            # NOTE: 不在这里 commit，事务边界由调用方控制
 
             return {
                 "run_id": str(crew_run.id),
@@ -187,7 +187,7 @@ class CrewExecutionService:
                 worker_results=[{"error": str(exc)}],
                 duration_ms=duration_ms,
             )
-            # Note: update_status already commits
+            # NOTE: 不在这里 commit，事务边界由调用方控制
 
             raise
 
