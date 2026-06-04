@@ -37,7 +37,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run backend regression tests
-        run: pytest tests/test_builder.py tests/test_workflow_engine.py tests/test_services.py tests/test_api.py tests/test_jobs.py -q
+        run: pytest tests/test_dependency_warnings.py tests/test_builder.py tests/test_workflow_engine.py tests/test_services.py tests/test_api.py tests/test_jobs.py -q
 
   frontend:
     name: Frontend typecheck and build

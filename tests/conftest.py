@@ -17,7 +17,7 @@ TEST_DATABASE_URL = os.environ.get(
     "sqlite+aiosqlite:///./.pytest_nexus.db",
 )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
-os.environ.setdefault("DEV_API_KEY", "test-api-key")
+os.environ["DEV_API_KEY"] = "test-api-key"
 from collections.abc import AsyncGenerator
 from datetime import timedelta
 from typing import Any
