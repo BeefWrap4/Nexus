@@ -17,11 +17,14 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
 
+from sqlalchemy import select
+
 from nexus.config import settings
 from nexus.db.database import get_db_session
 from nexus.engine.enums import HITLStatus
 from nexus.engine.event_bus import EventBus
 from nexus.exceptions import HITLException, HITLTaskNotFoundException, HITLTimeoutException
+from nexus.models.hitl import HITLTask as HITLTaskORM
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,35 @@ class HITLController:
         self.notification = notification_service
         self._tasks: dict[str, HITLTask] = {}  # 内存缓存（Worker 本地）
         self._lock = asyncio.Lock()  # 并发安全锁
+
+    async def _load_hitl_task_from_db(self, task_id: str):
+        """从数据库加载 HITLTask ORM 记录.
+
+        Returns:
+            HITLTask ORM 实例，不存在返回 None
+        """
+        async with get_db_session() as session:
+            stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def _update_hitl_task_in_db(self, task_id: str, updates: dict[str, Any]) -> None:
+        """更新数据库中的 HITLTask 记录.
+
+        Args:
+            task_id: 任务ID
+            updates: 要更新的字段字典
+        """
+        try:
+            async with get_db_session() as session:
+                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
+                result = await session.execute(stmt)
+                db_task = result.scalar_one_or_none()
+                if db_task:
+                    for key, value in updates.items():
+                        setattr(db_task, key, value)
+        except Exception:
+            logger.error("Failed to update HITL task %s in database", task_id, exc_info=True)
 
     async def create_task(
         self,
@@ -201,21 +233,16 @@ class HITLController:
         # 从数据库检查（跨 Worker 场景）
         if not task or task.response is None:
             try:
-                from nexus.models.hitl import HITLTask as HITLTaskORM
-                from sqlalchemy import select
-                async with get_db_session() as session:
-                    stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
-                    result = await session.execute(stmt)
-                    db_task = result.scalar_one_or_none()
-                    if db_task and db_task.response:
-                        resp = HITLResponse(**db_task.response)
-                        # 缓存到内存
-                        if task:
-                            task.response = resp
-                            task.status = HITLStatus(db_task.status)
-                        return resp
-                    if not db_task:
-                        raise HITLTaskNotFoundException(task_id)
+                db_task = await self._load_hitl_task_from_db(task_id)
+                if db_task and db_task.response:
+                    resp = HITLResponse(**db_task.response)
+                    # 缓存到内存
+                    if task:
+                        task.response = resp
+                        task.status = HITLStatus(db_task.status)
+                    return resp
+                if not db_task:
+                    raise HITLTaskNotFoundException(task_id)
             except HITLTaskNotFoundException:
                 raise
             except Exception:
@@ -268,30 +295,25 @@ class HITLController:
         # 1. 从数据库验证任务存在（如果不在内存中）
         if not task:
             try:
-                from nexus.models.hitl import HITLTask as HITLTaskORM
-                from sqlalchemy import select
-                async with get_db_session() as session:
-                    stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
-                    result = await session.execute(stmt)
-                    db_task = result.scalar_one_or_none()
-                    if not db_task:
-                        raise HITLTaskNotFoundException(task_id)
-                    # 创建内存缓存
-                    task = HITLTask(
-                        id=db_task.id,
-                        run_id=str(db_task.wf_run_id),
-                        node_id=db_task.node_id,
-                        task_type=HITLType(db_task.task_type),
-                        title=db_task.title,
-                        description=db_task.description or "",
-                        context=db_task.context or {},
-                        assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
-                        status=HITLStatus(db_task.status),
-                        deadline=db_task.deadline,
-                        created_at=db_task.created_at,
-                    )
-                    async with self._lock:
-                        self._tasks[task_id] = task
+                db_task = await self._load_hitl_task_from_db(task_id)
+                if not db_task:
+                    raise HITLTaskNotFoundException(task_id)
+                # 创建内存缓存
+                task = HITLTask(
+                    id=db_task.id,
+                    run_id=str(db_task.wf_run_id),
+                    node_id=db_task.node_id,
+                    task_type=HITLType(db_task.task_type),
+                    title=db_task.title,
+                    description=db_task.description or "",
+                    context=db_task.context or {},
+                    assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
+                    status=HITLStatus(db_task.status),
+                    deadline=db_task.deadline,
+                    created_at=db_task.created_at,
+                )
+                async with self._lock:
+                    self._tasks[task_id] = task
             except HITLTaskNotFoundException:
                 raise
             except Exception:
@@ -319,20 +341,11 @@ class HITLController:
             task.responded_at = datetime.now(timezone.utc)
 
         # 5. 更新数据库
-        try:
-            from nexus.models.hitl import HITLTask as HITLTaskORM
-            from sqlalchemy import select
-            async with get_db_session() as session:
-                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
-                result = await session.execute(stmt)
-                db_task = result.scalar_one_or_none()
-                if db_task:
-                    db_task.status = HITLStatus.APPROVED.value if response.approved else HITLStatus.REJECTED.value
-                    db_task.response = response.__dict__
-                    db_task.responded_at = datetime.now(timezone.utc)
-        except Exception:
-            logger.error("Failed to update HITL task %s in database", task_id, exc_info=True)
-            # DB 更新失败不阻塞
+        await self._update_hitl_task_in_db(task_id, {
+            "status": HITLStatus.APPROVED.value if response.approved else HITLStatus.REJECTED.value,
+            "response": response.__dict__,
+            "responded_at": datetime.now(timezone.utc),
+        })
 
         # 6. 广播响应事件（跨进程：Worker 通过 Pub/Sub 收到后恢复）
         await self.event_bus.publish(
@@ -375,31 +388,26 @@ class HITLController:
 
         # 从数据库加载
         try:
-            from nexus.models.hitl import HITLTask as HITLTaskORM
-            from sqlalchemy import select
-            async with get_db_session() as session:
-                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
-                result = await session.execute(stmt)
-                db_task = result.scalar_one_or_none()
-                if not db_task:
-                    raise HITLTaskNotFoundException(task_id)
-                task = HITLTask(
-                    id=db_task.id,
-                    run_id=str(db_task.wf_run_id),
-                    node_id=db_task.node_id,
-                    task_type=HITLType(db_task.task_type),
-                    title=db_task.title,
-                    description=db_task.description or "",
-                    context=db_task.context or {},
-                    assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
-                    status=HITLStatus(db_task.status),
-                    response=HITLResponse(**db_task.response) if db_task.response else None,
-                    deadline=db_task.deadline,
-                    responded_at=db_task.responded_at,
-                    created_at=db_task.created_at,
-                )
-                self._tasks[task_id] = task
-                return task
+            db_task = await self._load_hitl_task_from_db(task_id)
+            if not db_task:
+                raise HITLTaskNotFoundException(task_id)
+            task = HITLTask(
+                id=db_task.id,
+                run_id=str(db_task.wf_run_id),
+                node_id=db_task.node_id,
+                task_type=HITLType(db_task.task_type),
+                title=db_task.title,
+                description=db_task.description or "",
+                context=db_task.context or {},
+                assignee_id=str(db_task.assignee_id) if db_task.assignee_id else None,
+                status=HITLStatus(db_task.status),
+                response=HITLResponse(**db_task.response) if db_task.response else None,
+                deadline=db_task.deadline,
+                responded_at=db_task.responded_at,
+                created_at=db_task.created_at,
+            )
+            self._tasks[task_id] = task
+            return task
         except HITLTaskNotFoundException:
             raise
         except Exception:
@@ -417,19 +425,11 @@ class HITLController:
             task.response = HITLResponse(approved=False, notes="Cancelled by operator")
 
         # 更新数据库
-        try:
-            from nexus.models.hitl import HITLTask as HITLTaskORM
-            from sqlalchemy import select
-            async with get_db_session() as session:
-                stmt = select(HITLTaskORM).where(HITLTaskORM.id == task_id)
-                result = await session.execute(stmt)
-                db_task = result.scalar_one_or_none()
-                if db_task:
-                    db_task.status = HITLStatus.REJECTED.value
-                    db_task.response = task.response.__dict__
-                    db_task.responded_at = datetime.now(timezone.utc)
-        except Exception:
-            logger.error("Failed to update cancelled HITL task %s in database", task_id, exc_info=True)
+        await self._update_hitl_task_in_db(task_id, {
+            "status": HITLStatus.REJECTED.value,
+            "response": task.response.__dict__,
+            "responded_at": datetime.now(timezone.utc),
+        })
 
         # 广播取消事件
         await self.event_bus.publish(

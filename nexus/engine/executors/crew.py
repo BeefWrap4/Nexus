@@ -7,11 +7,12 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from nexus.agent.base import AgentConfig, BaseAgent
+from nexus.agent.base import BaseAgent
 from nexus.agent.crew import Crew, CrewConfig, CrewMode
 from nexus.agent.llm_client import LLMClient
 from nexus.config import settings
 from nexus.db.database import AsyncSessionLocal
+from nexus.engine.executors._helpers import build_agent_config_from_model, make_failed_result
 from nexus.engine.executors.llm import create_llm_client
 from nexus.engine.enums import NodeStatus
 from nexus.engine.state_manager import WorkflowState
@@ -98,28 +99,7 @@ class CrewNodeExecutor(NodeExecutor):
                 manager = None
 
                 for ca, agent_model in rows:
-                    agent_config = AgentConfig(
-                        name=agent_model.name,
-                        role=agent_model.role or "",
-                        goal=agent_model.goal or "",
-                        backstory=agent_model.backstory or "",
-                        system_prompt=agent_model.system_prompt or "",
-                        provider=agent_model.llm_settings.get(
-                            "provider", settings.DEFAULT_LLM_PROVIDER
-                        ),
-                        model=agent_model.llm_settings.get(
-                            "model", settings.DEFAULT_LLM_MODEL
-                        ),
-                        temperature=agent_model.llm_settings.get(
-                            "temperature", settings.DEFAULT_LLM_TEMPERATURE
-                        ),
-                        max_tokens=agent_model.llm_settings.get(
-                            "max_tokens", settings.DEFAULT_LLM_MAX_TOKENS
-                        ),
-                        max_iterations=agent_model.max_iterations
-                        or settings.DEFAULT_MAX_ITERATIONS,
-                        tools=agent_model.tools or [],
-                    )
+                    agent_config = build_agent_config_from_model(agent_model)
 
                     llm_client = self._create_llm_client(agent_model.llm_settings)
 
@@ -194,11 +174,7 @@ class CrewNodeExecutor(NodeExecutor):
                 )
 
         except Exception as e:
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+            return make_failed_result(node.id, e)
 
     def _create_llm_client(self, llm_settings: dict[str, Any]) -> LLMClient:
         return create_llm_client(llm_settings)

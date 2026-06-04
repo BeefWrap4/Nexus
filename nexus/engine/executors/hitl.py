@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from nexus.engine.enums import NodeStatus, RunStatus
+from nexus.engine.executors._helpers import make_failed_result
 from nexus.engine.hitl_controller import HITLController, HITLType
 from nexus.engine.state_manager import WorkflowState
 from nexus.engine.workflow_types import Node, NodeExecutor, NodeResult
@@ -96,8 +97,4 @@ class HITLNodeExecutor(NodeExecutor):
 
         except Exception as e:
             state.status = RunStatus.RUNNING
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+            return make_failed_result(node.id, e)

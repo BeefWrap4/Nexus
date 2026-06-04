@@ -16,11 +16,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.agent.base import AgentConfig, BaseAgent
+from nexus.agent.base import BaseAgent
 from nexus.agent.crew import Crew, CrewConfig, CrewMode
 from nexus.agent.llm_client import LLMClient
 from nexus.config import settings
 from nexus.engine.enums import CrewRunStatus
+from nexus.engine.executors._helpers import build_agent_config_from_model
 from nexus.models.agent import Agent as AgentModel
 from nexus.services.crew import CrewRunService, CrewService
 
@@ -212,28 +213,7 @@ class CrewExecutionService:
             if not agent_model:
                 continue
 
-            agent_config = AgentConfig(
-                name=agent_model.name,
-                role=agent_model.role or "",
-                goal=agent_model.goal or "",
-                backstory=agent_model.backstory or "",
-                system_prompt=agent_model.system_prompt or "",
-                provider=agent_model.llm_settings.get(
-                    "provider", settings.DEFAULT_LLM_PROVIDER
-                ),
-                model=agent_model.llm_settings.get(
-                    "model", settings.DEFAULT_LLM_MODEL
-                ),
-                temperature=agent_model.llm_settings.get(
-                    "temperature", settings.DEFAULT_LLM_TEMPERATURE
-                ),
-                max_tokens=agent_model.llm_settings.get(
-                    "max_tokens", settings.DEFAULT_LLM_MAX_TOKENS
-                ),
-                max_iterations=agent_model.max_iterations
-                or settings.DEFAULT_MAX_ITERATIONS,
-                tools=agent_model.tools or [],
-            )
+            agent_config = build_agent_config_from_model(agent_model)
 
             llm_client = _create_llm_client(agent_model.llm_settings)
             base_agent = BaseAgent(

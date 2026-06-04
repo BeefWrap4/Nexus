@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from nexus.engine.enums import NodeStatus
+from nexus.engine.executors._helpers import make_failed_result
 from nexus.engine.state_manager import WorkflowState
 from nexus.engine.workflow_types import Node, NodeExecutor, NodeResult
 from nexus.exceptions import ToolNotFoundException
@@ -84,11 +85,7 @@ class ToolNodeExecutor(NodeExecutor):
                 error={"message": f"Tool '{tool_name}' not found"},
             )
         except Exception as e:
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+            return make_failed_result(node.id, e)
 
     async def _execute_stream(
         self,
@@ -177,8 +174,4 @@ class ToolNodeExecutor(NodeExecutor):
             )
 
         except Exception as e:
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+            return make_failed_result(node.id, e)

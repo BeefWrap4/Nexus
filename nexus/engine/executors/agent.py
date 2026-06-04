@@ -7,6 +7,7 @@ from uuid import UUID
 
 from nexus.agent.base import AgentConfig, BaseAgent, Task
 from nexus.config import settings
+from nexus.engine.executors._helpers import make_failed_result
 from nexus.engine.executors.llm import create_llm_client
 from nexus.engine.enums import NodeStatus
 from nexus.engine.state_manager import WorkflowState
@@ -116,10 +117,6 @@ class AgentNodeExecutor(NodeExecutor):
                 },
             )
         except Exception as e:
-            return NodeResult(
-                node_id=node.id,
-                status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
-            )
+            return make_failed_result(node.id, e)
         finally:
             TRACE_CONTEXT.reset(trace_token)
