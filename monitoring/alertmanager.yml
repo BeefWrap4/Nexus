@@ -1,0 +1,170 @@
+# =============================================================================
+# NEXUS Alertmanager 配置
+# =============================================================================
+# 
+# 功能：
+# 1. 告警路由和分组
+# 2. 钉钉Webhook通知集成
+# 3. 告警抑制和静默
+# =============================================================================
+
+global:
+  # 告警解析超时时间
+  resolve_timeout: 5m
+  
+  # SMTP配置（可选，用于邮件通知）
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alertmanager@nexus.internal'
+  smtp_auth_username: 'alertmanager@nexus.internal'
+  smtp_auth_password: 'your-smtp-password'
+
+# =============================================================================
+# 告警模板
+# =============================================================================
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# =============================================================================
+# 路由配置
+# =============================================================================
+route:
+  # 默认接收器
+  receiver: 'dingtalk-default'
+  
+  # 告警分组策略
+  group_by: ['alertname', 'severity', 'team']
+  
+  # 等待多久发送初始通知（收集更多告警一起发送）
+  group_wait: 30s
+  
+  # 同一组告警之间等待多久再次发送
+  group_interval: 5m
+  
+  # 已解决告警的重复发送间隔
+  repeat_interval: 4h
+  
+  # 子路由（根据标签路由到不同接收器）
+  routes:
+    # Critical级别告警 - 立即通知
+    - match:
+        severity: critical
+      receiver: 'dingtalk-critical'
+      group_wait: 10s
+      repeat_interval: 1h
+    
+    # Database团队告警
+    - match:
+        team: database
+      receiver: 'dingtalk-database'
+    
+    # Finance团队告警（LLM成本）
+    - match:
+        team: finance
+      receiver: 'dingtalk-finance'
+    
+    # Infrastructure团队告警
+    - match:
+        team: infrastructure
+      receiver: 'dingtalk-infrastructure'
+
+# =============================================================================
+# 告警抑制规则
+# =============================================================================
+inhibit_rules:
+  # 如果存在critical级别告警，抑制同组的warning级别告警
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'team']
+
+# =============================================================================
+# 接收器配置
+# =============================================================================
+receivers:
+  # 默认钉钉接收器
+  - name: 'dingtalk-default'
+    webhook_configs:
+      - url: 'http://dingtalk-webhook:8060/dingtalk/webhook1/send'
+        send_resolved: true
+        http_config:
+          timeout: 10s
+
+  # Critical级别钉钉接收器（高优先级）
+  - name: 'dingtalk-critical'
+    webhook_configs:
+      - url: 'http://dingtalk-webhook:8060/dingtalk/webhook1/send'
+        send_resolved: true
+        http_config:
+          timeout: 5s
+
+  # Database团队钉钉接收器
+  - name: 'dingtalk-database'
+    webhook_configs:
+      - url: 'http://dingtalk-webhook:8060/dingtalk/webhook2/send'
+        send_resolved: true
+        http_config:
+          timeout: 10s
+
+  # Finance团队钉钉接收器
+  - name: 'dingtalk-finance'
+    webhook_configs:
+      - url: 'http://dingtalk-webhook:8060/dingtalk/webhook3/send'
+        send_resolved: true
+        http_config:
+          timeout: 10s
+
+  # Infrastructure团队钉钉接收器
+  - name: 'dingtalk-infrastructure'
+    webhook_configs:
+      - url: 'http://dingtalk-webhook:8060/dingtalk/webhook4/send'
+        send_resolved: true
+        http_config:
+          timeout: 10s
+
+# =============================================================================
+# 使用说明
+# =============================================================================
+# 
+# 1. 钉钉Webhook适配器部署
+#    使用开源项目: https://github.com/timonius/dingtalk-webhook
+#    
+#    Docker Compose配置示例：
+#    ```yaml
+#    dingtalk-webhook:
+#      image: timonius/dingtalk-webhook:latest
+#      container_name: nexus-dingtalk-webhook
+#      environment:
+#        DINGTALK_WEBHOOK_URL_1: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_1"
+#        DINGTALK_WEBHOOK_URL_2: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_2"
+#        DINGTALK_WEBHOOK_URL_3: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_3"
+#        DINGTALK_WEBHOOK_URL_4: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_4"
+#      ports:
+#        - "8060:8060"
+#      networks:
+#        - nexus-network
+#    ```
+#
+# 2. 获取钉钉机器人Token
+#    - 在钉钉群中添加自定义机器人
+#    - 安全设置选择"自定义关键词"或"IP地址段"
+#    - 复制Webhook地址中的access_token
+#
+# 3. 告警消息格式
+#    钉钉适配器会自动将Prometheus告警转换为钉钉卡片消息
+#    包含：告警名称、严重程度、描述、触发时间、相关链接等
+#
+# 4. 测试告警
+#    curl -X POST http://localhost:9093/api/v1/alerts \
+#      -H "Content-Type: application/json" \
+#      -d '[{
+#        "labels": {
+#          "alertname": "TestAlert",
+#          "severity": "warning",
+#          "team": "backend"
+#        },
+#        "annotations": {
+#          "summary": "测试告警",
+#          "description": "这是一条测试告警消息"
+#        }
+#      }]'

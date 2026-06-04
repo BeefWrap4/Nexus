@@ -1,0 +1,169 @@
+# =============================================================================
+# NEXUS 告警规则配置
+# =============================================================================
+# 
+# 包含以下告警规则：
+# 1. HighAPIErrorRate - API错误率>5%
+# 2. HighP95Latency - p95延迟>2s
+# 3. DatabaseConnectionPoolExhausted - DB连接池>90%
+# 4. HighWorkflowFailureRate - 工作流失败率>10%
+# 5. HighLLMCost - LLM成本>$10/h
+# 6. QueueBacklog - 队列积压>100
+# 7. HighDiskUsage - 磁盘使用>80%
+# =============================================================================
+
+groups:
+  # ---------------------------------------------------------------------------
+  # API 性能告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_api_alerts
+    rules:
+      # 1. API错误率过高 (>5%)
+      - alert: HighAPIErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Nexus API 错误率过高"
+          description: |
+            API 5xx 错误率达到 {{ $value | humanizePercentage }}，超过阈值 5%。
+            请立即检查应用日志和依赖服务状态。
+          runbook_url: "https://wiki.nexus.internal/runbooks/high-api-error-rate"
+
+      # 2. API P95延迟过高 (>2s)
+      - alert: HighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Nexus API P95 延迟过高"
+          description: |
+            API P95 延迟达到 {{ $value | humanizeDuration }}，超过阈值 2s。
+            请检查数据库查询、LLM调用和网络状况。
+          runbook_url: "https://wiki.nexus.internal/runbooks/high-p95-latency"
+
+  # ---------------------------------------------------------------------------
+  # 数据库告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_database_alerts
+    rules:
+      # 3. 数据库连接池耗尽 (>90%)
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          (
+            pg_stat_activity_count{datname="nexus"}
+            /
+            pg_settings_max_connections
+          ) > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Nexus 数据库连接池即将耗尽"
+          description: |
+            PostgreSQL 连接池使用率达到 {{ $value | humanizePercentage }}，超过阈值 90%。
+            请检查是否有长事务或连接泄漏。
+          runbook_url: "https://wiki.nexus.internal/runbooks/db-connection-pool-exhausted"
+
+  # ---------------------------------------------------------------------------
+  # 工作流执行告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_workflow_alerts
+    rules:
+      # 4. 工作流失败率过高 (>10%)
+      - alert: HighWorkflowFailureRate
+        expr: |
+          (
+            sum(rate(nexus_workflow_runs_total{status="failed"}[15m]))
+            /
+            sum(rate(nexus_workflow_runs_total[15m]))
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Nexus 工作流失败率过高"
+          description: |
+            工作流失败率达到 {{ $value | humanizePercentage }}，超过阈值 10%。
+            请检查工作流定义、节点执行器和依赖服务。
+          runbook_url: "https://wiki.nexus.internal/runbooks/high-workflow-failure-rate"
+
+  # ---------------------------------------------------------------------------
+  # LLM 成本告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_llm_alerts
+    rules:
+      # 5. LLM 成本过高 (>$10/h)
+      - alert: HighLLMCost
+        expr: |
+          sum(rate(nexus_llm_cost_usd[1h])) * 3600 > 10
+        for: 15m
+        labels:
+          severity: warning
+          team: finance
+        annotations:
+          summary: "Nexus LLM API 成本过高"
+          description: |
+            LLM API 每小时成本达到 ${{ $value | humanize }}，超过阈值 $10/h。
+            请检查是否有异常调用或需要优化提示词。
+          runbook_url: "https://wiki.nexus.internal/runbooks/high-llm-cost"
+
+  # ---------------------------------------------------------------------------
+  # 队列告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_queue_alerts
+    rules:
+      # 6. ARQ 队列积压过多 (>100)
+      - alert: QueueBacklog
+        expr: nexus_arq_queue_length > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Nexus ARQ 队列积压严重"
+          description: |
+            ARQ 队列长度达到 {{ $value }}，超过阈值 100。
+            请检查 Worker 健康状况和处理能力。
+          runbook_url: "https://wiki.nexus.internal/runbooks/queue-backlog"
+
+  # ---------------------------------------------------------------------------
+  # 基础设施告警
+  # ---------------------------------------------------------------------------
+  - name: nexus_infrastructure_alerts
+    rules:
+      # 7. 磁盘使用率过高 (>80%)
+      - alert: HighDiskUsage
+        expr: |
+          (
+            node_filesystem_size_bytes{mountpoint="/"}
+            -
+            node_filesystem_avail_bytes{mountpoint="/"}
+          )
+          /
+          node_filesystem_size_bytes{mountpoint="/"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "Nexus 服务器磁盘使用率过高"
+          description: |
+            根分区磁盘使用率达到 {{ $value | humanizePercentage }}，超过阈值 80%。
+            请清理日志文件或扩展磁盘空间。
+          runbook_url: "https://wiki.nexus.internal/runbooks/high-disk-usage"
