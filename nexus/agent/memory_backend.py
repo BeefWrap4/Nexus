@@ -203,8 +203,8 @@ def create_memory_backend(backend_type: str, redis_client=None) -> MemoryBackend
     """工厂函数：根据配置创建记忆后端.
 
     Args:
-        backend_type: "memory" 或 "redis"
-        redis_client: Redis 客户端（backend_type="redis" 时必需）
+        backend_type: "memory", "redis", 或 "vector"
+        redis_client: Redis 客户端（backend_type="redis"/"vector" 时可选）
 
     Returns:
         MemoryBackend 实例
@@ -218,5 +218,18 @@ def create_memory_backend(backend_type: str, redis_client=None) -> MemoryBackend
         if redis_client is None:
             raise ValueError("redis_client is required for redis backend")
         return RedisBackend(redis_client)
+    elif backend_type == "vector":
+        from nexus.config import settings
+        from nexus.agent.vector_memory import EmbeddingService, VectorMemoryBackend
+
+        embed_svc = EmbeddingService(
+            backend="mock",
+            model_name=settings.AGENT_VECTOR_MEMORY_EMBEDDING_MODEL,
+            dim=settings.AGENT_VECTOR_MEMORY_DIM,
+        )
+        return VectorMemoryBackend(
+            embedding_service=embed_svc,
+            redis_client=redis_client,
+        )
     else:
         raise ValueError(f"Unsupported memory backend: {backend_type}")

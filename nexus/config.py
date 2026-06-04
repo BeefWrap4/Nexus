@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default="development", validation_alias="ENVIRONMENT")
     DEBUG: bool = Field(default=False, validation_alias="DEBUG")
     CORS_ALLOWED_ORIGINS: list[str] = Field(
-        default_factory=list, validation_alias="CORS_ALLOWED_ORIGINS"
+        default_factory=lambda: ["http://localhost:5173"],
+        validation_alias="CORS_ALLOWED_ORIGINS",
     )
 
     # 安全
@@ -112,9 +113,21 @@ class Settings(BaseSettings):
     AGENT_MEMORY_ENABLED: bool = Field(default=True, validation_alias="AGENT_MEMORY_ENABLED")
     AGENT_MEMORY_BACKEND: str = Field(
         default="memory", validation_alias="AGENT_MEMORY_BACKEND"
-    )  # memory / redis
+    )  # memory / redis / vector
     AGENT_MEMORY_MAX_TOKENS: int = Field(
         default=8000, validation_alias="AGENT_MEMORY_MAX_TOKENS"
+    )
+
+    # Agent向量记忆
+    AGENT_VECTOR_MEMORY_ENABLED: bool = Field(
+        default=False, validation_alias="AGENT_VECTOR_MEMORY_ENABLED"
+    )
+    AGENT_VECTOR_MEMORY_DIM: int = Field(
+        default=384, validation_alias="AGENT_VECTOR_MEMORY_DIM"
+    )
+    AGENT_VECTOR_MEMORY_EMBEDDING_MODEL: str = Field(
+        default="BAAI/bge-small-zh-v1.5",
+        validation_alias="AGENT_VECTOR_MEMORY_EMBEDDING_MODEL",
     )
 
     # ------------------------------------------------------------------
