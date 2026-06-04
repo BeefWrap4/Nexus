@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     ENABLE_PROMETHEUS: bool = True
     ENABLE_OPENTELEMETRY: bool = False
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = Field(
+        default="http://localhost:4318/v1/traces",
+        validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT",
+    )
     LOG_LEVEL: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
 

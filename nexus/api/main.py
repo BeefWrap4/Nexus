@@ -142,6 +142,12 @@ async def lifespan(app: FastAPI):
     # 启动
     await init_db()
 
+    # OpenTelemetry 链路追踪（graceful degradation when disabled or SDK missing）
+    from nexus.observability.tracing import setup_tracing
+    tracer = setup_tracing()
+    if tracer:
+        app.state.tracer = tracer
+
     # 生产环境安全校验
     if settings.ENVIRONMENT == "production":
         _validate_production_security()
@@ -249,10 +255,31 @@ app.add_middleware(PrometheusMiddleware)
 # 全局异常处理
 @app.exception_handler(NexusException)
 async def nexus_exception_handler(request: Request, exc: NexusException):
-    """处理NEXUS自定义异常."""
+    """处理NEXUS自定义异常.
+    
+    返回结构化的错误响应，包含错误码、消息和详细信息。
+    响应格式:
+    {
+        "success": false,
+        "error": {
+            "code": 1500,
+            "name": "INTERNAL_SERVER_ERROR",
+            "message": "错误描述",
+            "details": {}
+        }
+    }
+    """
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.message, "code": exc.code},
+        content={
+            "success": False,
+            "error": {
+                "code": exc.error_code.value if hasattr(exc, 'error_code') else 1500,
+                "name": exc.code if hasattr(exc, 'code') else "UNKNOWN_ERROR",
+                "message": exc.message,
+                "details": exc.details if hasattr(exc, 'details') else {},
+            },
+        },
     )
 
 
@@ -261,6 +288,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """处理Pydantic请求参数校验异常.
 
     返回结构化的422错误，包含详细的字段验证失败信息。
+    响应格式:
+    {
+        "success": false,
+        "error": {
+            "code": 1401,
+            "name": "VALIDATION_INVALID_INPUT",
+            "message": "Request validation failed",
+            "details": {
+                "errors": [...]
+            }
+        }
+    }
     """
     errors = []
     for err in exc.errors():
@@ -272,9 +311,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=422,
         content={
-            "code": "VALIDATION_ERROR",
-            "message": "Request validation failed",
-            "errors": errors,
+            "success": False,
+            "error": {
+                "code": 1401,
+                "name": "VALIDATION_INVALID_INPUT",
+                "message": "Request validation failed",
+                "details": {"errors": errors},
+            },
         },
     )
 
@@ -284,6 +327,16 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
     """处理SQLAlchemy数据库异常.
 
     返回503 Service Unavailable，不暴露底层数据库错误详情。
+    响应格式:
+    {
+        "success": false,
+        "error": {
+            "code": 1302,
+            "name": "DB_QUERY_ERROR",
+            "message": "Database service temporarily unavailable",
+            "details": {}
+        }
+    }
     """
     import logging
 
@@ -293,8 +346,13 @@ async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
     return JSONResponse(
         status_code=503,
         content={
-            "code": "DATABASE_ERROR",
-            "message": "Database service temporarily unavailable",
+            "success": False,
+            "error": {
+                "code": 1302,
+                "name": "DB_QUERY_ERROR",
+                "message": "Database service temporarily unavailable",
+                "details": {},
+            },
         },
     )
 
@@ -304,6 +362,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     """全局兜底异常处理器.
 
     捕获所有未处理的异常，返回500错误但绝不暴露堆栈或内部实现细节。
+    响应格式:
+    {
+        "success": false,
+        "error": {
+            "code": 1500,
+            "name": "INTERNAL_SERVER_ERROR",
+            "message": "An internal server error occurred",
+            "details": {}
+        }
+    }
     """
     import logging
 
@@ -313,8 +381,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={
-            "code": "INTERNAL_ERROR",
-            "message": "An internal server error occurred",
+            "success": False,
+            "error": {
+                "code": 1500,
+                "name": "INTERNAL_SERVER_ERROR",
+                "message": "An internal server error occurred",
+                "details": {},
+            },
         },
     )
 
