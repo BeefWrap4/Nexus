@@ -1,24 +1,18 @@
-"""ARQ 工作流执行任务.
-
-定义可在 ARQ Worker 中执行的顶层任务函数。
-Worker 启动时通过 arq CLI 加载此模块。
-
-关键设计:
-1. 函数必须是模块级、可序列化的（不能是闭包/lambda）
-2. Worker 中重建完整的引擎链路（状态不共享，通过 Redis Pub/Sub 通信）
-3. 数据库状态通过独立会话更新（与引擎内存状态分离）
-"""
+"""ARQ task entry point for workflow execution."""
 
 from __future__ import annotations
 
 import traceback
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 
-from nexus.config import settings
+import structlog
+
 from nexus.db.database import get_db_session
-from nexus.engine.workflow_engine import WorkflowEngine
+from nexus.engine.builder import build_engine_and_executors
 from nexus.engine.enums import RunStatus
+from nexus.observability.metrics import WORKFLOW_RUN_DURATION, WORKFLOW_RUNS_TOTAL
 from nexus.services.run import RunService
 
 
@@ -29,25 +23,10 @@ async def execute_workflow_job(
     trigger_payload: dict[str, Any],
     tenant_id: str,
 ) -> dict[str, Any]:
-    """ARQ Worker 中执行工作流.
-
-    Args:
-        ctx: ARQ 上下文，包含 redis 连接等
-        run_id: 工作流运行实例ID
-        workflow_config: 工作流DAG配置（nodes + edges）
-        trigger_payload: 触发载荷
-        tenant_id: 租户ID
-
-    Returns:
-        {"run_id": str, "status": str, "duration_ms": int}
-
-    Raises:
-        执行失败时抛出异常，ARQ 会根据配置重试
-    """
-    import structlog
-
+    """Execute a workflow inside an ARQ worker process."""
     logger = structlog.get_logger()
     redis = ctx.get("redis")
+    run_service = RunService()
 
     logger.info(
         "workflow_job_started",
@@ -56,9 +35,7 @@ async def execute_workflow_job(
         worker_id=ctx.get("worker_id", "unknown"),
     )
 
-    # 1. 更新数据库状态为 running
     async with get_db_session() as session:
-        run_service = RunService()
         run = await run_service.update_status(
             session,
             run_id=UUID(run_id),
@@ -68,47 +45,14 @@ async def execute_workflow_job(
         if run is None:
             raise ValueError(f"Run {run_id} not found for tenant {tenant_id}")
 
-    # 2. 引擎构建（使用公共 builder，消除与 runner.py 的重复）
-    from nexus.engine.builder import parse_workflow_definition, create_engine_components, register_base_executors
-
-    event_bus, state_manager, checkpoint_mgr, variable_pool, router_engine = create_engine_components(
-        redis_client=redis
-    )
-    engine = WorkflowEngine(
-        state_manager=state_manager,
-        event_bus=event_bus,
-        checkpoint_mgr=checkpoint_mgr,
-        variable_pool=variable_pool,
-        router_engine=router_engine,
-    )
-
-    # 3. 注册节点执行器（完整模式：包括 TOOL 和 CONDITION）
-    from nexus.tools.registry import get_tool_registry
-
-    tool_registry = get_tool_registry()
-    # 创建 Agent Memory Backend
-    from nexus.agent.memory_backend import create_memory_backend
-
-    try:
-        if settings.AGENT_MEMORY_BACKEND == "redis" and redis:
-            memory_backend = create_memory_backend("redis", redis)
-        else:
-            memory_backend = create_memory_backend("memory")
-    except Exception:
-        memory_backend = create_memory_backend("memory")
-
-    register_base_executors(
-        engine, event_bus,
-        tool_registry=tool_registry,
-        memory_backend=memory_backend,
+    wf_def, engine, extras = build_engine_and_executors(
+        config=workflow_config,
         redis_client=redis,
         register_extra=True,
     )
+    event_bus = extras["event_bus"]
+    state_manager = extras["state_manager"]
 
-    # 4. 解析工作流定义（使用 builder 的共享解析函数）
-    wf_def = parse_workflow_definition(workflow_config)
-
-    # 5. 广播开始事件（通过 Redis Pub/Sub 传播到 API 进程）
     await event_bus.publish(
         {
             "type": "run_started",
@@ -118,20 +62,13 @@ async def execute_workflow_job(
         }
     )
 
-    # 6. 执行工作流（带指标记录）
-    from nexus.observability.metrics import (
-        WORKFLOW_RUNS_TOTAL,
-        WORKFLOW_RUN_DURATION,
-        record_node_execution,
-    )
-    from time import perf_counter
-
     run_start = perf_counter()
+    run_status = RunStatus.FAILED.value
     try:
         result = await engine.execute(wf_def, trigger_payload, run_id)
         run_status = result.status.value
+        state = state_manager.get_state(run_id)
 
-        # 7. 广播结束事件
         await event_bus.publish(
             {
                 "type": "run_completed",
@@ -141,14 +78,11 @@ async def execute_workflow_job(
                 "duration_ms": result.duration_ms,
                 "node_states": {
                     nid: ns.value
-                    for nid, ns in state_manager.get_state(run_id).node_states.items()
-                }
-                if state_manager.get_state(run_id)
-                else {},
+                    for nid, ns in (state.node_states if state else {}).items()
+                },
             }
         )
 
-        # 8. 更新数据库状态
         async with get_db_session() as session:
             await run_service.update_status(
                 session,
@@ -156,9 +90,7 @@ async def execute_workflow_job(
                 tenant_id=UUID(tenant_id),
                 status=result.status.value,
                 result=result.output,
-                state=state_manager.get_state(run_id).to_dict()
-                if state_manager.get_state(run_id)
-                else {},
+                state=state.to_dict() if state else {},
             )
 
         logger.info(
@@ -175,7 +107,6 @@ async def execute_workflow_job(
         }
 
     except Exception as exc:
-        run_status = RunStatus.FAILED.value
         error_info = {
             "type": type(exc).__name__,
             "message": str(exc),
@@ -189,7 +120,6 @@ async def execute_workflow_job(
             error_type=error_info["type"],
         )
 
-        # 广播失败事件
         await event_bus.publish(
             {
                 "type": "run_failed",
@@ -199,7 +129,6 @@ async def execute_workflow_job(
             }
         )
 
-        # 更新数据库状态为 failed
         async with get_db_session() as session:
             await run_service.update_status(
                 session,
@@ -211,7 +140,6 @@ async def execute_workflow_job(
 
         raise
     finally:
-        # Prometheus 指标：记录执行耗时和状态
         run_duration = perf_counter() - run_start
         WORKFLOW_RUNS_TOTAL.labels(status=run_status, tenant_id=tenant_id).inc()
         WORKFLOW_RUN_DURATION.labels(status=run_status).observe(run_duration)

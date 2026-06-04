@@ -79,6 +79,12 @@ def parse_workflow_definition(config: dict[str, Any]) -> WorkflowDefinition:
 
 def create_engine_components(
     redis_client=None,
+    *,
+    event_bus: EventBus | None = None,
+    state_manager: StateManager | None = None,
+    checkpoint_mgr: CheckpointManager | None = None,
+    variable_pool: VariablePool | None = None,
+    router_engine: RouterEngine | None = None,
 ) -> tuple[EventBus, StateManager, CheckpointManager, VariablePool, RouterEngine]:
     """创建引擎核心组件.
 
@@ -88,11 +94,11 @@ def create_engine_components(
     Returns:
         (event_bus, state_manager, checkpoint_mgr, variable_pool, router_engine)
     """
-    event_bus = EventBus(redis_client=redis_client)
-    state_manager = StateManager(redis_client=redis_client)
-    checkpoint_mgr = CheckpointManager()
-    variable_pool = VariablePool()
-    router_engine = RouterEngine()
+    event_bus = event_bus or EventBus(redis_client=redis_client)
+    state_manager = state_manager or StateManager(redis_client=redis_client)
+    checkpoint_mgr = checkpoint_mgr or CheckpointManager()
+    variable_pool = variable_pool or VariablePool()
+    router_engine = router_engine or RouterEngine()
     return event_bus, state_manager, checkpoint_mgr, variable_pool, router_engine
 
 
@@ -205,6 +211,13 @@ def build_engine_and_executors(
     *,
     redis_client=None,
     register_extra: bool = False,
+    event_bus: EventBus | None = None,
+    state_manager: StateManager | None = None,
+    checkpoint_mgr: CheckpointManager | None = None,
+    variable_pool: VariablePool | None = None,
+    router_engine: RouterEngine | None = None,
+    tool_registry=None,
+    memory_backend=None,
 ) -> tuple[WorkflowDefinition, WorkflowEngine, dict[str, Any]]:
     """一站式构建：解析 DAG + 创建组件 + 注册执行器.
 
@@ -220,13 +233,29 @@ def build_engine_and_executors(
         extras_dict 包含 {"tool_registry": ..., "memory_backend": ...}
     """
     wf_def = parse_workflow_definition(config)
-    event_bus, state_manager, cp, vp, re_ = create_engine_components(redis_client)
+    event_bus, state_manager, cp, vp, re_ = create_engine_components(
+        redis_client,
+        event_bus=event_bus,
+        state_manager=state_manager,
+        checkpoint_mgr=checkpoint_mgr,
+        variable_pool=variable_pool,
+        router_engine=router_engine,
+    )
     engine = build_engine(event_bus, state_manager, cp, vp, re_)
     extras = register_base_executors(
         engine, event_bus,
-        tool_registry=None,
-        memory_backend=None,
+        tool_registry=tool_registry,
+        memory_backend=memory_backend,
         redis_client=redis_client,
         register_extra=register_extra,
+    )
+    extras.update(
+        {
+            "event_bus": event_bus,
+            "state_manager": state_manager,
+            "checkpoint_mgr": cp,
+            "variable_pool": vp,
+            "router_engine": re_,
+        }
     )
     return wf_def, engine, extras
