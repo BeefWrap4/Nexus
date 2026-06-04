@@ -22,7 +22,7 @@ from nexus.engine.checkpoint import CheckpointManager
 from nexus.engine.enums import NodeType
 from nexus.engine.event_bus import EventBus
 from nexus.engine.hitl_controller import HITLController
-from nexus.engine.node_executors import (
+from nexus.engine.executors import (
     AgentNodeExecutor,
     ConditionNodeExecutor,
     CrewNodeExecutor,
