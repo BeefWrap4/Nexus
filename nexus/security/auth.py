@@ -190,6 +190,11 @@ class AuthService:
 # ---------------------------------------------------------------------------
 
 
+# JWT rate limiting — basic in-memory tracking (module-level persistence)
+import time
+_jwt_call_times: dict[str, list[float]] = {}
+
+
 async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -283,6 +288,20 @@ async def get_current_user(
     if credentials:
         try:
             payload = AuthService.verify_token(credentials.credentials)
+
+            # JWT rate limiting — basic in-memory check (uses module-level _jwt_call_times)
+            user_key = payload.get("sub", "unknown")
+            now = time.time()
+            if user_key not in _jwt_call_times:
+                _jwt_call_times[user_key] = []
+            _jwt_call_times[user_key] = [t for t in _jwt_call_times[user_key] if now - t < 60]
+            _jwt_call_times[user_key].append(now)
+            if len(_jwt_call_times[user_key]) > 200:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="JWT rate limit exceeded",
+                )
+
             return {
                 "id": payload["sub"],
                 "tenant_id": payload.get("tenant_id", "default"),
