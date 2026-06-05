@@ -1,6 +1,8 @@
 """AutoAgent API — 目标到可执行工作流."""
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+
+from nexus.security.auth import get_current_user
 
 router = APIRouter(tags=["auto"])
 
@@ -29,7 +31,11 @@ class PlanResponse(BaseModel):
 
 
 @router.post("/plan", response_model=PlanResponse)
-async def auto_plan(request: Request, body: PlanRequest):
+async def auto_plan(
+    request: Request,
+    body: PlanRequest,
+    current_user: dict = Depends(get_current_user),
+):
     """将高层目标自动分解为可执行工作流 DAG.
 
     输入: "分析销售数据，找出趋势，生成报告"
@@ -65,7 +71,11 @@ async def auto_plan(request: Request, body: PlanRequest):
 
 
 @router.post("/execute")
-async def auto_execute(request: Request, body: PlanRequest):
+async def auto_execute(
+    request: Request,
+    body: PlanRequest,
+    current_user: dict = Depends(get_current_user),
+):
     """从目标到执行的完整自动化流水线.
 
     1. 分解目标 → WorkflowDefinition
@@ -96,6 +106,7 @@ async def auto_execute(request: Request, body: PlanRequest):
     async with AsyncSessionLocal() as session:
         workflow = Workflow(
             id=str(uuid.uuid4()),
+            tenant_id=current_user.get("tenant_id", "default"),
             name=f"Auto: {body.goal[:60]}",
             description=body.goal,
             config=result.blueprint.workflow_config,
