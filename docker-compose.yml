@@ -275,13 +275,12 @@ services:
       ARQ_MAX_RETRIES: ${ARQ_MAX_RETRIES:-3}
     ports:
       - "${WORKER_METRICS_PORT:-8080}:8080"
-    # Worker 无 HTTP health endpoint，覆盖 Dockerfile 的 healthcheck 为 always-success
     healthcheck:
-      test: ["CMD-SHELL", "exit 0"]
+      test: ["CMD-SHELL", "python -c \"import redis; r=redis.Redis(host='redis', port=6379); r.ping()\""]
       interval: 30s
-      timeout: 5s
-      start_period: 5s
-      retries: 1
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy

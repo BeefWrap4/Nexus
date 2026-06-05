@@ -106,6 +106,19 @@ class WorkerSettings:
 
     # Worker 启动/关闭钩子 (ARQ 0.26+ 要求 staticmethod 签名)
     @staticmethod
+    async def health_check() -> bool:
+        """验证ARQ连接和Redis状态."""
+        try:
+            from redis.asyncio import Redis
+
+            r = Redis.from_url(settings.REDIS_URL or "redis://redis:6379/0")
+            await r.ping()
+            await r.close()
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
     async def on_startup(ctx: dict) -> None:
         """Worker 启动时初始化."""
         import structlog
