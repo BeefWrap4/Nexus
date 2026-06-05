@@ -24,6 +24,7 @@ from nexus.exceptions import LLMCallException, MaxIterationsReachedException
 from nexus.observability.agent_metrics import record_agent_execution, AGENT_DECISION_LATENCY
 from nexus.observability.llm_tracer import get_trace_context, set_trace_context
 from nexus.prompts.resolver import PromptResolver
+from nexus.security.pii_guard import PIIGuard
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,18 @@ class BaseAgent:
         ctx = context or {}
         tool_calls_log = []
         observations = []
+
+        # PII 检测与脱敏
+        try:
+            pii = PIIGuard()
+            task_desc = task.description if hasattr(task, 'description') else str(task)
+            if pii.has_pii(task_desc):
+                findings = pii.detect(task_desc)
+                logger.warning("PII detected in task input: %s", [f["type"] for f in findings])
+                if hasattr(task, 'description'):
+                    task.description = pii.sanitize(task_desc)
+        except Exception:
+            pass  # PII detection failure should not block agent execution
 
         # 设置 trace context（供 LLM 调用追踪）
         trace_token = set_trace_context(
