@@ -503,6 +503,45 @@ services:
     profiles:
       - monitoring
 
+  # ---------------------------------------------------------------------------
+  # Loki (Log Aggregation)
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:2.9
+    container_name: nexus-loki
+    restart: unless-stopped
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter (Host Metrics)
+  # ---------------------------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: nexus-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+
 # =============================================================================
 # Volumes
 # =============================================================================
@@ -522,6 +561,8 @@ volumes:
   alertmanager-data:
     driver: local
   grafana-data:
+    driver: local
+  loki-data:
     driver: local
 
 # =============================================================================
