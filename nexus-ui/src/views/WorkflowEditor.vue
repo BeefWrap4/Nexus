@@ -4,17 +4,17 @@
     <div class="toolbar">
       <a-space>
         <a-button @click="$router.back()">
-          <ArrowLeftOutlined /> 返回
+          <ArrowLeftOutlined /> {{ t('toolbar.return') }}
         </a-button>
         <a-divider type="vertical" />
         <a-button type="primary" @click="saveWorkflow">
-          <SaveOutlined /> 保存
+          <SaveOutlined /> {{ t('toolbar.save') }}
         </a-button>
         <a-button @click="loadWorkflow">
-          <ReloadOutlined /> 加载
+          <ReloadOutlined /> {{ t('toolbar.load') }}
         </a-button>
         <a-button @click="exportJson">
-          <ExportOutlined /> 导出 JSON
+          <ExportOutlined /> {{ t('toolbar.exportJson') }}
         </a-button>
         <a-upload
           :before-upload="importJson"
@@ -22,15 +22,15 @@
           accept=".json"
         >
           <a-button>
-            <ImportOutlined /> 导入 JSON
+            <ImportOutlined /> {{ t('toolbar.importJson') }}
           </a-button>
         </a-upload>
         <a-divider type="vertical" />
         <a-button type="dashed" @click="testWorkflow">
-          <PlayCircleOutlined /> 测试运行
+          <PlayCircleOutlined /> {{ t('toolbar.testRun') }}
         </a-button>
         <a-button danger @click="clearCanvas">
-          <ClearOutlined /> 清空画布
+          <ClearOutlined /> {{ t('toolbar.clearCanvas') }}
         </a-button>
       </a-space>
     </div>
@@ -146,7 +146,7 @@
     <!-- 导出 JSON 弹窗 -->
     <a-modal
       v-model:open="exportModalOpen"
-      title="工作流 JSON"
+      :title="t('workflow.exportJson')"
       width="800px"
       :footer="null"
     >
@@ -160,19 +160,19 @@
         style="margin-top: 12px"
         @click="copyToClipboard"
       >
-        <CopyOutlined /> 复制到剪贴板
+        <CopyOutlined /> {{ t('common.copy') }}
       </a-button>
     </a-modal>
 
     <!-- 测试运行弹窗 -->
     <a-modal
       v-model:open="testModalOpen"
-      title="测试运行"
+      :title="t('workflow.testRun')"
       @ok="confirmTestRun"
       @cancel="testModalOpen = false"
     >
       <a-form layout="vertical">
-        <a-form-item label="输入参数 (JSON)">
+        <a-form-item :label="t('workflow.inputParamError').split(' ')[0] + ' (JSON)'">
           <a-textarea
             v-model:value="testInputJson"
             :rows="6"
@@ -194,6 +194,7 @@ import { MiniMap } from '@vue-flow/minimap'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { message, Modal } from 'ant-design-vue'
+import { useI18n } from 'vue-i18n'
 import {
   PlayCircleOutlined,
   RobotOutlined,
@@ -216,6 +217,8 @@ import NodePanel from '@/components/NodePanel.vue'
 import NodeProperties from '@/components/NodeProperties.vue'
 import { workflowApi, agentApi, toolApi } from '@/api'
 import type { WorkflowNode, Agent, Tool } from '@/types'
+
+const { t } = useI18n()
 
 const route = useRoute()
 const router = useRouter()
@@ -303,10 +306,10 @@ async function loadWorkflowFromServer() {
     const { data } = await workflowApi.getById(workflowId.value)
     if (data.definition) {
       importDefinition(data.definition)
-      message.success('工作流加载成功')
+      message.success(t('workflow.loadedSuccess'))
     }
   } catch (err: any) {
-    message.error(`加载工作流失败: ${err?.response?.data?.detail || err.message}`)
+    message.error(`${t('workflow.loadFailed')}: ${err?.response?.data?.detail || err.message}`)
   }
 }
 
@@ -342,9 +345,9 @@ function onDrop(event: DragEvent) {
       data: { type: nodeInfo.type },
     }
     nodes.value.push(newNode)
-    message.success(`已添加 ${nodeInfo.label} 节点`)
+    message.success(`${t('workflow.addNodeSuccess')}: ${nodeInfo.label}`)
   } catch {
-    message.error('添加节点失败')
+    message.error(t('workflow.addNodeFailed'))
   }
 }
 
@@ -429,24 +432,24 @@ function onNodeDelete(nodeId: string) {
     (e: any) => e.source !== nodeId && e.target !== nodeId
   )
   selectedNode.value = null
-  message.success('节点已删除')
+  message.success(t('workflow.nodeDeleted'))
 }
 
 // ========== 清空画布 ==========
 function clearCanvas() {
   Modal.confirm({
-    title: '确认清空画布？',
-    content: '此操作将删除所有节点和连线，且无法撤销。',
-    okText: '确认清空',
+    title: t('workflow.confirmClear'),
+    content: t('workflow.clearConfirmText'),
+    okText: t('common.confirm'),
     okType: 'danger',
-    cancelText: '取消',
+    cancelText: t('common.cancel'),
     onOk: () => {
       nodes.value = []
       edges.value = []
       selectedNode.value = null
       setNodes([])
       setEdges([])
-      message.success('画布已清空')
+      message.success(t('workflow.canvasCleared'))
     },
   })
 }
@@ -519,10 +522,10 @@ async function saveWorkflow() {
 
     if (!isNew.value) {
       await workflowApi.update(workflowId.value, payload)
-      message.success('工作流已更新')
+      message.success(t('workflow.savedSuccess'))
     } else {
       const { data } = await workflowApi.create(payload)
-      message.success('工作流已创建')
+      message.success(t('workflow.createdSuccess'))
       // 创建成功后跳转到编辑页面
       if (data.id) {
         router.replace(`/workflows/${data.id}/edit`)
@@ -532,7 +535,7 @@ async function saveWorkflow() {
     // 同时保存到 localStorage 作为草稿备份
     localStorage.setItem('nexus_workflow_draft', JSON.stringify(definition))
   } catch (err: any) {
-    message.error(`保存失败: ${err?.response?.data?.detail || err.message}`)
+    message.error(`${t('workflow.saveFailed')}: ${err?.response?.data?.detail || err.message}`)
   }
 }
 
@@ -545,12 +548,12 @@ async function loadWorkflow() {
     if (saved) {
       try {
         importDefinition(JSON.parse(saved))
-        message.success('已从 localStorage 恢复草稿')
+        message.success(t('workflow.draftRestored'))
       } catch {
-        message.error('恢复草稿失败')
+        message.error(t('workflow.restoreDraftFailed'))
       }
     } else {
-      message.info('无本地草稿可恢复')
+      message.info(t('workflow.noDraft'))
     }
   }
 }
@@ -564,7 +567,7 @@ function exportJson() {
 
 function copyToClipboard() {
   navigator.clipboard.writeText(exportedJson.value).then(() => {
-    message.success('已复制到剪贴板')
+    message.success(t('workflow.jsonCopied'))
   })
 }
 
@@ -583,11 +586,10 @@ function importJson(file: File) {
   reader.readAsText(file)
   return false
 }
-
 // ========== 测试运行 ==========
 function testWorkflow() {
   if (isNew.value) {
-    message.warning('请先保存工作流')
+    message.warning(t('workflow.pleaseSaveFirst'))
     return
   }
   testModalOpen.value = true
@@ -599,15 +601,15 @@ async function confirmTestRun() {
     try {
       input = JSON.parse(testInputJson.value || '{}')
     } catch {
-      message.error('输入参数 JSON 格式错误')
+      message.error(t('workflow.inputParamError'))
       return
     }
 
     await workflowApi.triggerRun(workflowId.value, input)
-    message.success('测试执行已触发')
+    message.success(t('workflow.testTriggered'))
     testModalOpen.value = false
   } catch (err: any) {
-    message.error(`测试执行失败: ${err?.response?.data?.detail || err.message}`)
+    message.error(`${t('workflow.testFailed')}: ${err?.response?.data?.detail || err.message}`)
   }
 }
 </script>

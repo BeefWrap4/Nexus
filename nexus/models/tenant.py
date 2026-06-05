@@ -125,6 +125,7 @@ class APIKey(Base):
     key_prefix = Column(String(20), nullable=False)
     permissions = Column(JSONVariant, default=list)  # ["workflows:read", "runs:write", ...]
     rate_limit = Column(Integer, default=1000)  # requests per minute
+    rate_window = Column(Integer, default=60)  # rate limit window in seconds
     last_used_at = Column(DateTime(timezone=True))
     expires_at = Column(DateTime(timezone=True))
     created_at = Column(

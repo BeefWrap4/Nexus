@@ -194,6 +194,14 @@ class CheckpointRecord(Base):
     """检查点记录表 - 用于状态恢复和分叉."""
 
     __tablename__ = "checkpoints"
+    __table_args__ = (
+        # 索引：按运行ID查询checkpoint
+        Index("ix_checkpoints_run_id", "run_id"),
+        # 复合索引：按运行ID和节点ID查询
+        Index("ix_checkpoints_run_node", "run_id", "node_id"),
+        # 索引：按创建时间查询（用于清理旧checkpoint）
+        Index("ix_checkpoints_created_at", "created_at"),
+    )
 
     id = Column(String(100), primary_key=True)
     run_id = Column(
@@ -214,6 +222,16 @@ class DeadLetterJob(Base):
     """死信队列记录表 - 用于失败任务的人工排查和重试."""
 
     __tablename__ = "dead_letter_jobs"
+    __table_args__ = (
+        # 索引：按状态查询（用于获取待处理任务）
+        Index("ix_dead_letter_status", "status"),
+        # 索引：按运行ID查询
+        Index("ix_dead_letter_run_id", "run_id"),
+        # 索引：按租户ID查询
+        Index("ix_dead_letter_tenant_id", "tenant_id"),
+        # 索引：按失败时间查询（用于清理旧记录）
+        Index("ix_dead_letter_failed_at", "failed_at"),
+    )
 
     id = Column(UUIDVariant, primary_key=True, default=uuid.uuid4)
     run_id = Column(UUIDVariant, nullable=False)

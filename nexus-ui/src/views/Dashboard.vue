@@ -3,28 +3,28 @@
     <a-row :gutter="16">
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="工作流" :value="stats.workflows" :value-style="{ color: '#1677ff' }">
+          <a-statistic :title="t('dashboard.workflows')" :value="stats.workflows" :value-style="{ color: '#1677ff' }">
             <template #prefix><NodeIndexOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="今日执行" :value="stats.runs" :value-style="{ color: '#52c41a' }">
+          <a-statistic :title="t('dashboard.todayRuns')" :value="stats.runs" :value-style="{ color: '#52c41a' }">
             <template #prefix><PlayCircleOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="Agents" :value="stats.agents" :value-style="{ color: '#722ed1' }">
+          <a-statistic :title="t('dashboard.agents')" :value="stats.agents" :value-style="{ color: '#722ed1' }">
             <template #prefix><RobotOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="待审批" :value="stats.hitl" :value-style="{ color: '#fa8c16' }">
+          <a-statistic :title="t('dashboard.pendingApproval')" :value="stats.hitl" :value-style="{ color: '#fa8c16' }">
             <template #prefix><QuestionCircleOutlined /></template>
           </a-statistic>
         </a-card>
@@ -35,28 +35,28 @@
     <a-row :gutter="16" style="margin-top: 16px">
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="缓存命中率" :value="stats.cache_hit_rate || 0" suffix="%" :value-style="{ color: '#52c41a' }">
+          <a-statistic :title="t('dashboard.cacheHitRate')" :value="stats.cache_hit_rate || 0" suffix="%" :value-style="{ color: '#52c41a' }">
             <template #prefix><ThunderboltOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="缓存命中次数" :value="stats.cache_hits || 0" :value-style="{ color: '#1677ff' }">
+          <a-statistic :title="t('dashboard.cacheHits')" :value="stats.cache_hits || 0" :value-style="{ color: '#1677ff' }">
             <template #prefix><CheckCircleOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="缓存节省Token" :value="stats.cache_saved_tokens || 0" :value-style="{ color: '#fa8c16' }">
+          <a-statistic :title="t('dashboard.cacheSavedTokens')" :value="stats.cache_saved_tokens || 0" :value-style="{ color: '#fa8c16' }">
             <template #prefix><SaveOutlined /></template>
           </a-statistic>
         </a-card>
       </a-col>
       <a-col :xs="12" :sm="12" :md="6">
         <a-card>
-          <a-statistic title="LLM调用次数" :value="stats.llm_calls || 0" :value-style="{ color: '#722ed1' }">
+          <a-statistic :title="t('dashboard.llmCalls')" :value="stats.llm_calls || 0" :value-style="{ color: '#722ed1' }">
             <template #prefix><MessageOutlined /></template>
           </a-statistic>
         </a-card>
@@ -65,7 +65,7 @@
 
     <a-row :gutter="16" style="margin-top: 16px">
       <a-col :xs="24" :md="12">
-        <a-card title="执行状态分布">
+        <a-card :title="t('dashboard.statusDistribution')">
           <div class="chart-placeholder">
             <div class="mini-bar-chart">
               <div v-for="(item, idx) in statusDistribution" :key="idx" class="bar-item">
@@ -78,7 +78,7 @@
         </a-card>
       </a-col>
       <a-col :xs="24" :md="12">
-        <a-card title="最近7天执行趋势">
+        <a-card :title="t('dashboard.weeklyTrend')">
           <div class="chart-placeholder">
             <div class="sparkline">
               <div
@@ -86,7 +86,7 @@
                 :key="idx"
                 class="spark-bar"
                 :style="{ height: `${(val / maxWeekly) * 100}%` }"
-                :title="`${val} 次`"
+                :title="`${val} ${t('common.times')}`"
               />
             </div>
             <div class="sparkline-labels">
@@ -98,17 +98,27 @@
     </a-row>
 
     <a-divider />
-    <h3>最近执行</h3>
-    <a-table :columns="columns" :dataSource="recentRuns" :pagination="false" size="small" :loading="loading" rowKey="id">
+    <h3>{{ t('dashboard.recentRuns') }}</h3>
+    <DataTable 
+      :columns="columns" 
+      :data-source="recentRuns" 
+      :pagination="{ pageSize: 10 }"
+      :searchable="false"
+      :refreshable="false"
+      :show-toolbar="false"
+      size="small" 
+      :loading="loading" 
+      row-key="id"
+    >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'status'">
-          <a-tag :color="statusColor(record.status)">{{ record.status }}</a-tag>
+          <StatusBadge :status="record.status" />
         </template>
         <template v-if="column.key === 'action'">
-          <a-button size="small" @click="viewRun(record.id)">查看</a-button>
+          <a-button size="small" @click="viewRun(record.id)">{{ t('common.view') }}</a-button>
         </template>
       </template>
-    </a-table>
+    </DataTable>
   </div>
 </template>
 
@@ -126,8 +136,13 @@ import {
   SaveOutlined,
   MessageOutlined,
 } from '@ant-design/icons-vue'
+import { useI18n } from 'vue-i18n'
 import api from '@/api'
 import type { WorkflowRun } from '@/types'
+
+const { t } = useI18n()
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import DataTable from '@/components/common/DataTable.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -149,36 +164,24 @@ const stats = ref<DashboardStats>({ workflows: 0, runs: 0, agents: 0, hitl: 0 })
 const recentRuns = ref<WorkflowRun[]>([])
 
 const columns = [
-  { title: 'Run ID', dataIndex: 'id', key: 'id' },
-  { title: '工作流', dataIndex: 'workflow_name', key: 'workflow' },
-  { title: '状态', dataIndex: 'status', key: 'status' },
-  { title: '触发方式', dataIndex: 'trigger_type', key: 'trigger' },
-  { title: '开始时间', dataIndex: 'started_at', key: 'time' },
-  { title: '操作', key: 'action' },
+  { title: t('dashboard.runId'), dataIndex: 'id', key: 'id' },
+  { title: t('dashboard.workflow'), dataIndex: 'workflow_name', key: 'workflow' },
+  { title: t('dashboard.status'), dataIndex: 'status', key: 'status' },
+  { title: t('dashboard.triggerType'), dataIndex: 'trigger_type', key: 'trigger' },
+  { title: t('dashboard.startTime'), dataIndex: 'started_at', key: 'time' },
+  { title: t('dashboard.action'), key: 'action' },
 ]
 
 const statusDistribution = ref([
-  { label: '成功', value: 0, percent: 0, status: 'success' },
-  { label: '运行中', value: 0, percent: 0, status: 'active' },
-  { label: '失败', value: 0, percent: 0, status: 'exception' },
-  { label: '取消', value: 0, percent: 0, status: 'normal' },
+  { label: t('status.succeeded'), value: 0, percent: 0, status: 'success' },
+  { label: t('status.running'), value: 0, percent: 0, status: 'active' },
+  { label: t('status.failed'), value: 0, percent: 0, status: 'exception' },
+  { label: t('status.cancelled'), value: 0, percent: 0, status: 'normal' },
 ])
 
 const weeklyTrend = ref([0, 0, 0, 0, 0, 0, 0])
-const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const weekDays = [t('common.monday'), t('common.tuesday'), t('common.wednesday'), t('common.thursday'), t('common.friday'), t('common.saturday'), t('common.sunday')]
 const maxWeekly = computed(() => Math.max(1, ...weeklyTrend.value))
-
-function statusColor(status: string) {
-  const colors: Record<string, string> = {
-    completed: 'green',
-    running: 'blue',
-    failed: 'red',
-    paused: 'orange',
-    cancelled: 'default',
-    pending: 'default',
-  }
-  return colors[status] || 'default'
-}
 
 function viewRun(id: string) {
   router.push(`/runs/${id}`)
@@ -203,15 +206,15 @@ async function fetchDashboardData() {
     const dist: Record<string, number> = statsRes.data?.status_distribution || { completed: 38, running: 4, failed: 2, cancelled: 1 }
     const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1
     statusDistribution.value = [
-      { label: '成功', value: dist.completed || 0, percent: Math.round(((dist.completed || 0) / total) * 100), status: 'success' },
-      { label: '运行中', value: dist.running || 0, percent: Math.round(((dist.running || 0) / total) * 100), status: 'active' },
-      { label: '失败', value: dist.failed || 0, percent: Math.round(((dist.failed || 0) / total) * 100), status: 'exception' },
-      { label: '取消', value: dist.cancelled || 0, percent: Math.round(((dist.cancelled || 0) / total) * 100), status: 'normal' },
+      { label: t('status.succeeded'), value: dist.completed || 0, percent: Math.round(((dist.completed || 0) / total) * 100), status: 'success' },
+      { label: t('status.running'), value: dist.running || 0, percent: Math.round(((dist.running || 0) / total) * 100), status: 'active' },
+      { label: t('status.failed'), value: dist.failed || 0, percent: Math.round(((dist.failed || 0) / total) * 100), status: 'exception' },
+      { label: t('status.cancelled'), value: dist.cancelled || 0, percent: Math.round(((dist.cancelled || 0) / total) * 100), status: 'normal' },
     ]
 
     weeklyTrend.value = statsRes.data?.weekly_trend || [12, 18, 15, 22, 28, 35, 45]
   } catch (err) {
-    message.error('获取Dashboard数据失败')
+    message.error(t('dashboard.fetchFailed'))
   } finally {
     loading.value = false
   }

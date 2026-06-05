@@ -34,23 +34,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # 全局指标定义
 # ---------------------------------------------------------------------------
 
-WORKFLOW_RUNS_TOTAL = Counter(
-    "nexus_workflow_runs_total",
-    "Total number of workflow runs",
-    ["status", "tenant_id"],
-)
-
-WORKFLOW_RUN_DURATION = Histogram(
-    "nexus_workflow_run_duration_seconds",
-    "Workflow run duration in seconds",
-    ["status"],
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
-)
-
-NODE_EXECUTIONS_TOTAL = Counter(
-    "nexus_node_executions_total",
-    "Total number of node executions",
-    ["node_type", "status"],
+# 从 workflow_metrics 导入工作流相关指标（避免重复定义）
+from nexus.observability.workflow_metrics import (
+    WORKFLOW_DURATION as WORKFLOW_RUN_DURATION,
+    WORKFLOW_RUNS_TOTAL,
+    NODE_EXECUTIONS_TOTAL,
 )
 
 HITL_TASKS_PENDING = Gauge(
@@ -78,50 +66,48 @@ API_REQUEST_DURATION = Histogram(
 )
 
 # ---------------------------------------------------------------------------
-# LLM 指标
+# LLM 指标 (已在 llm_tracer.py 中定义，此处注释避免重复)
 # ---------------------------------------------------------------------------
-
-LLM_CALLS_TOTAL = Counter(
-    "nexus_llm_calls_total",
-    "Total LLM calls",
-    ["model", "status", "tenant_id"],
-)
-
-LLM_LATENCY = Histogram(
-    "nexus_llm_latency_seconds",
-    "LLM call latency",
-    ["model"],
-    buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
-)
-
-LLM_TOKENS_TOTAL = Counter(
-    "nexus_llm_tokens_total",
-    "Total tokens consumed",
-    ["model", "token_type"],
-)
+# LLM_CALLS_TOTAL = Counter(
+#     "nexus_llm_calls_total",
+#     "Total LLM calls",
+#     ["model", "status", "tenant_id"],
+# )
+#
+# LLM_LATENCY = Histogram(
+#     "nexus_llm_latency_seconds",
+#     "LLM call latency",
+#     ["model"],
+#     buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+# )
+#
+# LLM_TOKENS_TOTAL = Counter(
+#     "nexus_llm_tokens_total",
+#     "Total tokens consumed",
+#     ["model", "token_type"],
+# )
 
 # ---------------------------------------------------------------------------
-# Semantic Cache 指标
+# Semantic Cache 指标 (已在 llm_tracer.py 中定义，此处注释避免重复)
 # ---------------------------------------------------------------------------
-
-CACHE_HITS_TOTAL = Counter(
-    "nexus_cache_hits_total",
-    "Total semantic cache hits",
-    ["model", "tenant_id"],
-)
-
-CACHE_MISSES_TOTAL = Counter(
-    "nexus_cache_misses_total",
-    "Total semantic cache misses",
-    ["model", "tenant_id"],
-)
-
-CACHE_LATENCY = Histogram(
-    "nexus_cache_latency_seconds",
-    "Semantic cache lookup latency",
-    ["model"],
-    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
-)
+# CACHE_HITS_TOTAL = Counter(
+#     "nexus_cache_hits_total",
+#     "Total semantic cache hits",
+#     ["model", "tenant_id"],
+# )
+#
+# CACHE_MISSES_TOTAL = Counter(
+#     "nexus_cache_misses_total",
+#     "Total semantic cache misses",
+#     ["model", "tenant_id"],
+# )
+#
+# CACHE_LATENCY = Histogram(
+#     "nexus_cache_latency_seconds",
+#     "Semantic cache lookup latency",
+#     ["model"],
+#     buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+# )
 
 
 # ---------------------------------------------------------------------------

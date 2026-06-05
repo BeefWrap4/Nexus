@@ -1,14 +1,51 @@
 """NEXUS自定义异常体系."""
 
+from typing import Optional, Dict, Any
+from nexus.exceptions.error_codes import NexusErrorCode, get_http_status_for_error_code
+
 
 class NexusException(Exception):
-    """NEXUS基础异常."""
+    """NEXUS基础异常.
+    
+    支持结构化错误码和详细信息，用于统一的错误响应格式。
+    
+    Attributes:
+        message: 错误消息
+        error_code: 错误码枚举值
+        status_code: HTTP状态码（可从error_code自动推导）
+        details: 额外的错误详情字典
+        code: 向后兼容的字符串错误码（已废弃，建议使用error_code）
+    """
 
-    status_code: int = 400
-
-    def __init__(self, message: str, code: str = "NEXUS_ERROR"):
+    def __init__(
+        self,
+        message: str,
+        error_code: Optional[NexusErrorCode] = None,
+        status_code: Optional[int] = None,
+        details: Optional[Dict[str, Any]] = None,
+        code: Optional[str] = None,  # 向后兼容
+    ):
+        """初始化NexusException.
+        
+        Args:
+            message: 错误描述消息
+            error_code: 错误码枚举值，如未提供则默认为INTERNAL_SERVER_ERROR
+            status_code: HTTP状态码，如未提供则从error_code自动推导
+            details: 额外的错误详情，将包含在响应中
+            code: [已废弃] 字符串错误码，仅用于向后兼容
+        """
         self.message = message
-        self.code = code
+        self.error_code = error_code or NexusErrorCode.INTERNAL_SERVER_ERROR
+        self.status_code = status_code or get_http_status_for_error_code(self.error_code)
+        self.details = details or {}
+        
+        # 向后兼容：保留code属性
+        if code:
+            self.code = code
+        else:
+            # 从error_code生成字符串形式的code
+            self.code = self.error_code.name
+        
         super().__init__(self.message)
 
 

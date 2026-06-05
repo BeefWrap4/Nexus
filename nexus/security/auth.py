@@ -7,6 +7,7 @@ API Key 格式: nexus_<prefix>_<secret>
 - secret: 32位随机URL-safe字符串
 - key_hash: HMAC-SHA256(SECRET_KEY, full_key)，存储于数据库
 - 验证流程: 提取prefix → 数据库索引查询 → HMAC比对 → 过期/撤销检查
+- 速率限制: 基于Redis滑动窗口算法，每个API Key独立计数
 """
 
 import hashlib
@@ -26,6 +27,7 @@ from nexus.config import settings
 from nexus.db.database import get_db
 from nexus.exceptions import AuthenticationException
 from nexus.models import APIKey, Tenant, User
+from nexus.security.rate_limiter import RateLimiter
 
 # 安全scheme
 security = HTTPBearer(auto_error=False)
@@ -209,6 +211,7 @@ async def get_current_user(
 
     Raises:
         HTTPException(401): 认证失败
+        HTTPException(429): 超出速率限制
     """
     # ------------------------------------------------------------------
     # 方式1: API Key 认证
@@ -238,6 +241,21 @@ async def get_current_user(
         # 数据库验证
         key_record = await _verify_api_key(db, api_key)
         if key_record:
+            # 速率限制检查（从 app.state 获取 Redis 客户端）
+            redis_client = getattr(request.app.state, "redis", None)
+            if redis_client:
+                try:
+                    limiter = RateLimiter(redis_client)
+                    await limiter.check_rate_limit(
+                        api_key=api_key,
+                        limit=key_record.rate_limit or 1000,
+                        window=key_record.rate_window or 60,
+                    )
+                except HTTPException as e:
+                    if e.status_code == 429:
+                        raise  # 重新抛出429错误
+                    # 其他HTTP异常不阻断认证流程
+
             # 获取关联用户信息
             user = None
             if key_record.user_id:

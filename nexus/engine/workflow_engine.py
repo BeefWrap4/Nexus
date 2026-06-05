@@ -28,7 +28,12 @@ from nexus.engine.workflow_types import (
     RunResult,
     WorkflowDefinition,
 )
-from nexus.exceptions import WorkflowExecutionException
+from nexus.exceptions import WorkflowExecutionException, NexusErrorCode
+from nexus.observability.metrics import WORKFLOW_RUN_DURATION
+from nexus.observability.workflow_metrics import (
+    record_node_execution,
+    record_workflow_execution,
+)
 
 
 class WorkflowEngine:
@@ -116,12 +121,47 @@ class WorkflowEngine:
 
             self._finalize_state(state, graph)
             duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+            
+            # 记录Prometheus指标
+            try:
+                duration_seconds = duration_ms / 1000.0
+                status_label = state.status.value if hasattr(state.status, 'value') else str(state.status)
+                WORKFLOW_RUN_DURATION.labels(status=status_label).observe(duration_seconds)
+            except Exception:
+                pass  # 指标记录失败不应影响主流程
 
         except Exception as e:
-            state.status = RunStatus.FAILED
-            state.error = {"type": type(e).__name__, "message": str(e)}
-            duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
-            raise
+            # 将未处理的异常转换为结构化的NexusException
+            from nexus.exceptions import NexusException
+            
+            if not isinstance(e, NexusException):
+                # 如果是未知异常，包装为NexusException
+                workflow_error = NexusException(
+                    message=f"Workflow execution failed: {str(e)}",
+                    error_code=NexusErrorCode.WORKFLOW_NODE_FAILED,
+                    details={
+                        "error_type": type(e).__name__,
+                        "run_id": run_id,
+                    }
+                )
+                state.status = RunStatus.FAILED
+                state.error = {
+                    "type": type(e).__name__,
+                    "message": str(e),
+                    "code": workflow_error.error_code.value,
+                }
+                duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                raise workflow_error from e
+            else:
+                # 已经是NexusException，直接记录状态
+                state.status = RunStatus.FAILED
+                state.error = {
+                    "type": type(e).__name__,
+                    "message": str(e),
+                    "code": e.error_code.value if hasattr(e, 'error_code') else None,
+                }
+                duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                raise
 
         finally:
             await self.state_manager.update_status(run_id, state.status)
@@ -199,12 +239,39 @@ class WorkflowEngine:
             )
 
         try:
-            return await executor.execute(node, inputs, state, run_id)
+            result = await executor.execute(node, inputs, state, run_id)
+            
+            # 记录节点执行指标
+            node_type_str = node.type.value if hasattr(node.type, 'value') else str(node.type)
+            record_node_execution(
+                node_type=node_type_str,
+                status=result.status.value if hasattr(result.status, 'value') else str(result.status),
+                duration_seconds=0.0,  # TODO: 从executor获取实际执行时间
+            )
+            
+            return result
         except Exception as e:
+            # 节点执行失败，返回结构化错误
+            from nexus.exceptions import NexusException
+            
+            error_details = {
+                "node_id": node.id,
+                "node_type": node.type.value if hasattr(node.type, 'value') else str(node.type),
+                "error_type": type(e).__name__,
+            }
+            
+            # 如果已经是NexusException，保留其错误码
+            if isinstance(e, NexusException):
+                error_details["code"] = e.error_code.value if hasattr(e, 'error_code') else None
+            
             return NodeResult(
                 node_id=node.id,
                 status=NodeStatus.FAILED,
-                error={"type": type(e).__name__, "message": str(e)},
+                error={
+                    "type": type(e).__name__,
+                    "message": str(e),
+                    "details": error_details,
+                },
             )
 
     def _merge_result(

@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from nexus.db.database import Base
@@ -27,6 +27,18 @@ class LLMCallTrace(Base):
     """
 
     __tablename__ = "llm_call_traces"
+    __table_args__ = (
+        # 复合索引：按租户和运行ID查询
+        Index("ix_llm_traces_tenant_run", "tenant_id", "run_id"),
+        # 复合索引：按模型和提供商查询（用于统计分析）
+        Index("ix_llm_traces_model_provider", "model", "provider"),
+        # 索引：按创建时间查询（用于时间序列分析）
+        Index("ix_llm_traces_created_at", "created_at"),
+        # 复合索引：按agent和节点查询（用于追踪特定agent的性能）
+        Index("ix_llm_traces_agent_node", "agent_id", "node_id"),
+        # 索引：缓存命中状态（用于缓存命中率统计）
+        Index("ix_llm_traces_cache_hit", "cache_hit"),
+    )
 
     id = Column(UUIDVariant, primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUIDVariant, nullable=False)

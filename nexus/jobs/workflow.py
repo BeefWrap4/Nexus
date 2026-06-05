@@ -13,6 +13,7 @@ from nexus.db.database import get_db_session
 from nexus.engine.builder import build_engine_and_executors
 from nexus.engine.enums import RunStatus
 from nexus.observability.metrics import WORKFLOW_RUN_DURATION, WORKFLOW_RUNS_TOTAL
+from nexus.observability.queue_metrics import record_task_execution
 from nexus.services.run import RunService
 
 
@@ -143,3 +144,10 @@ async def execute_workflow_job(
         run_duration = perf_counter() - run_start
         WORKFLOW_RUNS_TOTAL.labels(status=run_status, tenant_id=tenant_id).inc()
         WORKFLOW_RUN_DURATION.labels(status=run_status).observe(run_duration)
+        
+        # 记录任务执行指标（队列级别）
+        record_task_execution(
+            job_type="workflow",
+            status=run_status,
+            duration_seconds=run_duration,
+        )

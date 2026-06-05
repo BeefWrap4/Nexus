@@ -379,6 +379,7 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -386,6 +387,50 @@ services:
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+
+  # ---------------------------------------------------------------------------
+  # Alertmanager (Alert Routing & Notification)
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: nexus-alertmanager
+    restart: unless-stopped
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    depends_on:
+      - prometheus
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+
+  # ---------------------------------------------------------------------------
+  # DingTalk Webhook Adapter (Alert Notification Bridge)
+  # ---------------------------------------------------------------------------
+  dingtalk-webhook:
+    image: timonius/dingtalk-webhook:latest
+    container_name: nexus-dingtalk-webhook
+    restart: unless-stopped
+    environment:
+      # 钉钉机器人Webhook URL（需要替换为实际的access_token）
+      DINGTALK_WEBHOOK_URL_1: ${DINGTALK_WEBHOOK_URL_1:-https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_1}
+      DINGTALK_WEBHOOK_URL_2: ${DINGTALK_WEBHOOK_URL_2:-https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_2}
+      DINGTALK_WEBHOOK_URL_3: ${DINGTALK_WEBHOOK_URL_3:-https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_3}
+      DINGTALK_WEBHOOK_URL_4: ${DINGTALK_WEBHOOK_URL_4:-https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_4}
+    ports:
+      - "8060:8060"
+    depends_on:
+      - alertmanager
     networks:
       - nexus-network
     profiles:
@@ -428,6 +473,8 @@ volumes:
   nexus-data:
     driver: local
   prometheus-data:
+    driver: local
+  alertmanager-data:
     driver: local
   grafana-data:
     driver: local

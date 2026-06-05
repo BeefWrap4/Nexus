@@ -54,51 +54,132 @@
 
 ## 系统架构
 
+### 后端分层架构图
+
+展示NEXUS的后端核心分层架构设计:
+
+```mermaid
+graph TB
+    Client[客户端<br/>Vue3 UI / API Client] --> API[API层<br/>FastAPI + WebSocket]
+    API --> Service[服务层<br/>Business Logic]
+    Service --> Engine[引擎层<br/>Workflow Engine]
+    Service --> Agent[Agent层<br/>ReAct + Crew]
+    Engine --> Model[数据层<br/>PostgreSQL + Redis]
+    Agent --> Model
+    
+    subgraph "基础设施"
+        MCP[MCP Protocol]
+        Obs[Observability<br/>Prometheus + Trace]
+        Tools[Tool Registry]
+    end
+    
+    API --> MCP
+    Engine --> Obs
+    Agent --> Tools
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         前端层 (Vue3)                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
-│  │ Dashboard│ │ 工作流编排 │ │ Crew管理 │ │ Prompts  │           │
-│  │ 仪表盘   │ │ (Vue-Flow)│ │ 团队    │ │ 模板管理 │           │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
-│  │ Traces   │ │ Eval     │ │ Code     │ │ 审批面板 │           │
-│  │ 追踪    │ │ 评估    │ │ Review  │ │ (HITL)  │           │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ REST API / WebSocket
-                           v
-┌─────────────────────────────────────────────────────────────────┐
-│  API Gateway (FastAPI)                                          │
-│  REST API + WebSocket + MCP Gateway                             │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌──────────────────────────┴──────────────────────────────────────┐
-│  编排引擎核心 (WorkflowEngine + Builder)                           │
-│  DAG执行 + 状态机 + HITL + 事件总线 + 检查点 + 引擎工厂            │
-├─────────────────────────────────────────────────────────────────┤
-│  Agent运行时                                                     │
-│  ├─ BaseAgent: ReAct循环 + LLM调用 + 决策解析 + 记忆系统          │
-│  └─ Crew: Hierarchical / Sequential / Parallel 协作模式          │
-├─────────────────────────────────────────────────────────────────┤
-│  支撑服务                                                        │
-│  ├─ Prompt引擎（模板解析 + 版本管理 + A/B实验）                   │
-│  ├─ Trace追踪器（LLM调用全链路记录）                              │
-│  ├─ Eval引擎（自动化评测 + 指标计算）                             │
-│  └─ Code Review（安全/性能/风格检查）                             │
-├─────────────────────────────────────────────────────────────────┤
-│  基础设施                                                        │
-│  ├─ LiteLLM Proxy（LLM统一网关，多供应商聚合）                    │
-│  ├─ PostgreSQL（主数据库）                                       │
-│  ├─ Redis（缓存 + 消息队列 + EventBus）                          │
-│  ├─ MinIO（对象存储 / 产物管理）                                  │
-│  └─ Smart Cache（语义缓存 / RAG）                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  可观测性                                                        │
-│  ├─ Prometheus（指标采集）                                       │
-│  └─ Grafana（可视化仪表盘）                                       │
-└─────────────────────────────────────────────────────────────────┘
+
+**架构说明:**
+- **API层**: FastAPI提供RESTful接口和WebSocket实时通信
+- **服务层**: 业务逻辑处理,统一事务边界
+- **引擎层**: DAG工作流执行引擎,支持状态持久化和Checkpoint
+- **Agent层**: ReAct循环 + Crew多Agent协作模式
+- **数据层**: PostgreSQL存储结构化数据,Redis用于缓存和消息队列
+- **基础设施**: MCP工具协议、可观测性监控、工具注册中心
+
+---
+
+### 工作流执行数据流图
+
+展示从用户触发到执行完成的完整数据流转过程:
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant API as API Gateway
+    participant Engine as Workflow Engine
+    participant DB as PostgreSQL
+    participant Agent as Agent Runtime
+    participant LLM as LiteLLM Proxy
+    
+    User->>API: 创建工作流
+    API->>DB: 保存workflow定义
+    User->>API: 触发执行
+    API->>Engine: 启动run
+    Engine->>DB: 创建run记录
+    Engine->>Engine: DAG调度
+    loop 每个节点
+        Engine->>Agent: 执行节点
+        Agent->>LLM: LLM调用
+        LLM-->>Agent: 返回结果
+        Agent->>DB: Checkpoint状态
+        Engine->>DB: 更新node_runs
+    end
+    Engine->>API: 执行完成
+    API->>User: 返回结果
 ```
+
+**流程说明:**
+1. **创建工作流**: 用户通过UI或API定义DAG结构,保存到数据库
+2. **触发执行**: 创建Run实例,初始化执行上下文
+3. **DAG调度**: 引擎按依赖关系并行调度就绪节点
+4. **节点执行**: Agent执行具体任务,调用LLM获取智能决策
+5. **状态持久化**: 每步Checkpoint确保可恢复性
+6. **结果返回**: 执行完成后聚合所有节点输出
+
+---
+
+### Docker部署拓扑图
+
+展示生产环境的容器化部署架构:
+
+```mermaid
+graph LR
+    subgraph "前端层"
+        UI[Dev UI :5173]
+        Nginx[Prod UI :80]
+    end
+    
+    subgraph "应用层"
+        API[API Backend :8765→8000]
+        Worker[ARQ Worker :8080]
+    end
+    
+    subgraph "数据层"
+        PG[(PostgreSQL :5432)]
+        Redis[(Redis :6379)]
+        MinIO[MinIO :9000/:9001]
+    end
+    
+    subgraph "AI服务"
+        LiteLLM[LiteLLM Proxy :4000]
+        Cache[Smart Cache :8777]
+    end
+    
+    subgraph "监控"
+        Prometheus[Prometheus :9090]
+        Grafana[Grafana :3000]
+    end
+    
+    UI --> API
+    Nginx --> API
+    API --> PG
+    API --> Redis
+    API --> MinIO
+    API --> LiteLLM
+    Worker --> PG
+    Worker --> Redis
+    Worker --> LiteLLM
+    Prometheus --> API
+    Prometheus --> Worker
+    Grafana --> Prometheus
+```
+
+**部署说明:**
+- **前端层**: 开发模式使用Vite热更新(:5173),生产模式通过Nginx静态服务(:80)
+- **应用层**: FastAPI主服务(:8765映射到容器内:8000) + ARQ异步Worker(:8080)
+- **数据层**: PostgreSQL持久化、Redis缓存/队列、MinIO对象存储
+- **AI服务**: LiteLLM统一管理多LLM供应商、Smart Cache语义缓存加速
+- **监控**: Prometheus采集指标,Grafana可视化展示
 
 ---
 
@@ -517,6 +598,170 @@ GitHub Actions 工作流配置见 [`.github/workflows/ci.yml`](.github/workflows
 - SSH 远程部署
 
 详细部署指南见 [DEPLOYMENT.md](DEPLOYMENT.md)
+
+---
+
+## 错误码参考
+
+NEXUS 使用统一的错误码体系，所有 API 响应遵循以下格式：
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": 1500,
+    "name": "INTERNAL_SERVER_ERROR",
+    "message": "错误描述",
+    "details": {}
+  }
+}
+```
+
+### 错误码分类
+
+#### 001-099: 认证授权错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1001 | AUTH_INVALID_TOKEN | 401 | 无效的访问令牌 |
+| 1002 | AUTH_TOKEN_EXPIRED | 401 | 访问令牌已过期 |
+| 1003 | AUTH_INSUFFICIENT_PERMISSIONS | 403 | 权限不足 |
+| 1004 | AUTH_API_KEY_INVALID | 401 | 无效的API密钥 |
+| 1005 | AUTH_API_KEY_EXPIRED | 401 | API密钥已过期 |
+| 1006 | AUTH_RATE_LIMIT_EXCEEDED | 429 | 超过速率限制 |
+
+#### 100-199: 工作流引擎错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1101 | WORKFLOW_NOT_FOUND | 404 | 工作流不存在 |
+| 1102 | WORKFLOW_INVALID_DEFINITION | 422 | 工作流定义无效 |
+| 1103 | WORKFLOW_CIRCULAR_DEPENDENCY | 422 | 工作流存在循环依赖 |
+| 1104 | WORKFLOW_EXECUTION_TIMEOUT | 408 | 工作流执行超时 |
+| 1105 | WORKFLOW_MAX_STEPS_EXCEEDED | 422 | 工作流超出最大步骤数 |
+| 1106 | WORKFLOW_NODE_FAILED | 500 | 工作流节点执行失败 |
+| 1107 | WORKFLOW_VALIDATION_FAILED | 422 | 工作流验证失败 |
+| 1108 | WORKFLOW_CHECKPOINT_NOT_FOUND | 404 | 工作流检查点不存在 |
+
+#### 200-299: Agent系统错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1201 | AGENT_NOT_FOUND | 404 | Agent不存在 |
+| 1202 | AGENT_EXECUTION_FAILED | 500 | Agent执行失败 |
+| 1203 | AGENT_LLM_CALL_FAILED | 502 | Agent调用LLM失败 |
+| 1204 | AGENT_TOOL_NOT_FOUND | 404 | Agent工具不存在 |
+| 1205 | AGENT_CONCURRENCY_LIMIT | 429 | Agent并发限制 |
+| 1206 | AGENT_MAX_ITERATIONS_REACHED | 422 | Agent达到最大迭代次数 |
+
+#### 300-399: 数据库错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1301 | DB_CONNECTION_FAILED | 503 | 数据库连接失败 |
+| 1302 | DB_QUERY_ERROR | 503 | 数据库查询错误 |
+| 1303 | DB_DUPLICATE_ENTRY | 409 | 数据库重复条目 |
+| 1304 | DB_INTEGRITY_VIOLATION | 422 | 数据库完整性约束违反 |
+
+#### 400-499: 参数校验错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1401 | VALIDATION_INVALID_INPUT | 400 | 无效的输入参数 |
+| 1402 | VALIDATION_MISSING_FIELD | 422 | 缺少必填字段 |
+| 1403 | VALIDATION_TYPE_MISMATCH | 422 | 类型不匹配 |
+| 1404 | VALIDATION_VALUE_OUT_OF_RANGE | 422 | 值超出范围 |
+
+#### 500-599: 内部服务错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1500 | INTERNAL_SERVER_ERROR | 500 | 内部服务器错误 |
+| 1501 | SERVICE_UNAVAILABLE | 503 | 服务不可用 |
+| 1502 | EXTERNAL_SERVICE_TIMEOUT | 504 | 外部服务超时 |
+| 1503 | MCP_CONNECTION_FAILED | 503 | MCP连接失败 |
+| 1504 | REDIS_CONNECTION_FAILED | 503 | Redis连接失败 |
+
+#### 600-699: HITL审批错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1601 | HITL_TASK_NOT_FOUND | 404 | HITL任务不存在 |
+| 1602 | HITL_TIMEOUT | 408 | HITL任务超时 |
+| 1603 | HITL_INVALID_ACTION | 422 | HITL操作无效 |
+
+#### 700-799: 工具执行错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1701 | TOOL_NOT_FOUND | 404 | 工具不存在 |
+| 1702 | TOOL_PERMISSION_DENIED | 403 | 工具权限不足 |
+| 1703 | TOOL_EXECUTION_FAILED | 500 | 工具执行失败 |
+| 1704 | TOOL_TIMEOUT | 504 | 工具执行超时 |
+
+#### 800-899: 租户与权限错误
+
+| 错误码 | 名称 | HTTP状态码 | 说明 |
+|--------|------|-----------|------|
+| 1801 | TENANT_NOT_FOUND | 404 | 租户不存在 |
+| 1802 | TENANT_ACCESS_DENIED | 403 | 租户访问被拒绝 |
+| 1803 | PERMISSION_DENIED | 403 | 权限被拒绝 |
+
+### 使用示例
+
+#### Python SDK
+
+```python
+from nexus.exceptions import NexusException, NexusErrorCode
+
+# 抛出带错误码的异常
+raise NexusException(
+    message="Workflow not found",
+    error_code=NexusErrorCode.WORKFLOW_NOT_FOUND,
+    details={"workflow_id": "wf_123"}
+)
+
+# 自定义HTTP状态码（可选）
+raise NexusException(
+    message="Custom error",
+    error_code=NexusErrorCode.INTERNAL_SERVER_ERROR,
+    status_code=500,
+    details={"reason": "custom reason"}
+)
+```
+
+#### API响应示例
+
+**成功响应:**
+```json
+{
+  "success": true,
+  "data": {...}
+}
+```
+
+**错误响应:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": 1101,
+    "name": "WORKFLOW_NOT_FOUND",
+    "message": "Workflow 'wf_123' not found",
+    "details": {
+      "workflow_id": "wf_123"
+    }
+  }
+}
+```
+
+### 错误处理最佳实践
+
+1. **使用结构化错误码**: 始终使用 `NexusErrorCode` 枚举，避免硬编码字符串
+2. **提供详细信息**: 在 `details` 字段中包含有助于调试的信息
+3. **适当的HTTP状态码**: 让系统自动从错误码推导HTTP状态码，除非有特殊需求
+4. **日志记录**: 在捕获异常时记录完整的错误上下文
+5. **客户端重试**: 对于 5xx 错误和 429 错误，客户端应实现指数退避重试
 
 ---
 
