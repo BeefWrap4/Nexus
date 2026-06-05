@@ -42,6 +42,16 @@ jobs:
         run: |
           pytest tests/ -v --cov=nexus --cov-report=term-missing --cov-fail-under=60
 
+      - name: Security scan (SAST)
+        run: |
+          pip install bandit
+          bandit -r nexus/ -ll -f txt
+
+      - name: Dependency vulnerability scan
+        run: |
+          pip install safety
+          safety check -r requirements.txt --ignore=70612 || true
+
   frontend:
     name: Frontend typecheck and build
     runs-on: ubuntu-latest
