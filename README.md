@@ -31,6 +31,9 @@
 | **API Key 认证** | HMAC-SHA256 数据库验证，支持过期/撤销/速率限制 |
 | **安全加固** | RBAC 权限引擎 + PII 检测预留 + 生产安全校验 |
 | **可观测性** | Prometheus + Grafana 指标监控，OpenTelemetry链路追踪 |
+| **插件系统** | Plugin SDK + 10 生命周期钩子 + ToolProvider 接口 |
+| **多租户计费** | Free/Pro/Enterprise 三档计划 + 配额管理 + DB持久化 |
+| **AutoAgent** | 目标→子任务分解→DAG 自动编排→执行 |
 
 ---
 
@@ -48,7 +51,13 @@
 | P8 | Code Review Agent | ✅ |
 | P9 | 语义缓存（Smart Cache） | ✅ |
 | P10 | 多Agent协作增强（Crew三种模式） | ✅ |
-| P11 | 待规划 | 🔜 |
+| P11a | 稳定性冲刺（测试+安全+前端+CI） | ✅ |
+| P11b | 能力深化（向量记忆+RBAC+HITL+OTel） | ✅ |
+| P11c | 生态建设（预置工具+行业模板+CLI+模板市场） | ✅ |
+| P2a | 多模态Agent（图像/音频/Vision API） | ✅ |
+| P2b | 插件SDK（PluginManager+Hooks+ToolProvider） | ✅ |
+| P2c | SaaS计费（Free/Pro/Enterprise+DB持久化） | ✅ |
+| P3 | AutoAgent（目标→DAG自动编排） | ✅ |
 
 ---
 
