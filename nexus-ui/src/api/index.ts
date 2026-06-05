@@ -74,6 +74,13 @@ api.interceptors.response.use(
     } else {
       message.error(`请求异常: ${error.message}`)
     }
+    // 网络错误降级
+    if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
+      if (import.meta.env.DEV) {
+        console.warn('[NEXUS] API unavailable, using degraded mode');
+        return Promise.resolve({ data: null, _degraded: true });
+      }
+    }
     return Promise.reject(error)
   }
 )
