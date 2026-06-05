@@ -75,6 +75,7 @@ import {
   TeamOutlined,
   BellOutlined,
   DownOutlined,
+  RocketOutlined,
 } from '@ant-design/icons-vue'
 
 const route = useRoute()
@@ -101,6 +102,7 @@ const pageTitle = computed(() => {
     crews: t('layout.crews'),
     'code-review': t('layout.codeReview'),
     'pr-bot': t('layout.prBot'),
+    chat: 'AI Chat',
     templates: t('layout.templateMarket'),
     analytics: t('layout.analytics'),
     settings: t('layout.settings'),
@@ -121,6 +123,7 @@ const menuItems = [
   { key: 'evals', icon: () => h(AuditOutlined), label: t('layout.eval') },
   { key: 'code-review', icon: () => h(CodeOutlined), label: t('layout.codeReview') },
   { key: 'pr-bot', icon: () => h(GithubOutlined), label: t('layout.prBot') },
+  { key: 'chat', icon: () => h(RocketOutlined), label: 'AI Chat' },
   { key: 'templates', icon: () => h(AppstoreOutlined), label: t('layout.templateMarket') },
   { key: 'hitl', icon: () => h(QuestionCircleOutlined), label: t('layout.approvalTasks') },
   { key: 'analytics', icon: () => h(BarChartOutlined), label: t('layout.analytics') },

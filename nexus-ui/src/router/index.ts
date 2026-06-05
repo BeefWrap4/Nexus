@@ -106,6 +106,11 @@ const routes = [
         component: () => import('@/views/PRBotConfig.vue'),
       },
       {
+        path: 'chat',
+        name: 'AIChat',
+        component: () => import('@/views/ChatView.vue'),
+      },
+      {
         path: 'templates',
         name: 'TemplateMarket',
         component: () => import('@/views/TemplateMarket.vue'),
