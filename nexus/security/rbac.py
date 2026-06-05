@@ -63,7 +63,10 @@ class RBACMiddleware(BaseHTTPMiddleware):
     def _parse_resource_type(path: str) -> str | None:
         """从请求路径解析资源类型."""
         parts = path.strip("/").split("/")
-        KNOWN_RESOURCES = {"workflows", "agents", "tools", "crews", "runs", "hitl", "tenants"}
+        KNOWN_RESOURCES = {
+            "workflows", "agents", "tools", "crews", "runs", "hitl", "tenants",
+            "prompts", "evals", "code-review", "traces", "mcp", "auto",
+        }
         for part in parts:
             if part in KNOWN_RESOURCES:
                 return part
