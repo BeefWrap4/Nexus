@@ -146,7 +146,7 @@ watch(() => form.variables, (vars) => {
 async function fetchPrompts() {
   loading.value = true
   try {
-    const res = await api.get('/prompts')
+    const res = await api.get('/prompts/prompts')
     prompts.value = res.data
   } catch (e: any) {
     message.error(e.response?.data?.detail || '获取失败')
@@ -188,7 +188,7 @@ async function handleSave() {
   saveLoading.value = true
   try {
     if (editingPrompt.value) {
-      await api.put(`/prompts/${editingPrompt.value.id}`, {
+      await api.put(`/prompts/prompts/${editingPrompt.value.id}`, {
         name: form.name,
         description: form.description,
         content: form.content,
@@ -197,7 +197,7 @@ async function handleSave() {
       })
       message.success('更新成功')
     } else {
-      await api.post('/prompts', {
+      await api.post('/prompts/prompts', {
         name: form.name,
         description: form.description,
         content: form.content,
@@ -219,7 +219,7 @@ async function handleSave() {
 
 async function deletePrompt(id: string) {
   try {
-    await api.delete(`/prompts/${id}`)
+    await api.delete(`/prompts/prompts/${id}`)
     message.success('删除成功')
     fetchPrompts()
   } catch (e: any) {

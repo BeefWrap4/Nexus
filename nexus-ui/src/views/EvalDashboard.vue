@@ -141,7 +141,7 @@ function statusColor(status: string) {
 async function fetchEvals() {
   loading.value = true
   try {
-    const res = await api.get('/evals')
+    const res = await api.get('/evals/evals')
     evals.value = res.data
   } catch (e: any) {
     message.error(e.response?.data?.detail || '获取失败')
@@ -158,7 +158,7 @@ async function handleCreate() {
   createLoading.value = true
   try {
     const dataset = JSON.parse(datasetStr.value)
-    await api.post('/evals', {
+    await api.post('/evals/evals', {
       name: form.name,
       eval_type: form.eval_type,
       dataset,
@@ -177,7 +177,7 @@ async function handleCreate() {
 async function runEval(id: string) {
   runningId.value = id
   try {
-    await api.post(`/evals/${id}/run`)
+    await api.post(`/evals/evals/${id}/run`)
     message.success('评估已启动（后台运行）')
   } catch (e: any) {
     message.error(e.response?.data?.detail || '启动失败')
@@ -197,7 +197,7 @@ function viewResults(record: any) {
 
 async function deleteEval(id: string) {
   try {
-    await api.delete(`/evals/${id}`)
+    await api.delete(`/evals/evals/${id}`)
     message.success('删除成功')
     fetchEvals()
   } catch (e: any) {

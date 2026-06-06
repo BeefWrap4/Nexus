@@ -130,9 +130,49 @@ export const toolApi = {
 
 // ==================== HITL Task API ====================
 export const hitlApi = {
-  getList: (params?: { status?: string; run_id?: string }) => api.get('/hitl', { params }),
-  getById: (id: string) => api.get(`/hitl/${id}`),
-  submit: (id: string, payload: any) => api.post(`/hitl/${id}/submit`, payload),
+  getList: (params?: { status?: string; run_id?: string }) => api.get('/hitl/tasks', { params }),
+  getById: (id: string) => api.get(`/hitl/tasks/${id}`),
+  respond: (id: string, payload: { decision: 'approve' | 'reject'; comment?: string; input_data?: any }) =>
+    api.post(`/hitl/tasks/${id}/respond`, payload),
+  getPendingCount: () => api.get('/hitl/tasks/pending/count'),
+}
+
+// ==================== Prompts API ====================
+// 修复 (前端): 后端路径是 /api/v1/prompts/prompts (因为 include_router 用
+// prefix='/api/v1/prompts', 内部路由又是 '/prompts'...)
+export const promptsApi = {
+  getList: (params?: any) => api.get('/prompts/prompts', { params }),
+  getById: (id: string) => api.get(`/prompts/prompts/${id}`),
+  create: (payload: any) => api.post('/prompts/prompts', payload),
+  update: (id: string, payload: any) => api.put(`/prompts/prompts/${id}`, payload),
+  delete: (id: string) => api.delete(`/prompts/prompts/${id}`),
+  getVersions: (id: string) => api.get(`/prompts/prompts/${id}/versions`),
+  getContent: (id: string) => api.get(`/prompts/prompts/${id}/content`),
+  diffVersions: (id: string, a: number, b: number) =>
+    api.get(`/prompts/prompts/${id}/versions/${a}/diff/${b}`),
+  // Experiments
+  listExperiments: (id: string) => api.get(`/prompts/prompts/${id}/experiments`),
+  createExperiment: (id: string, payload: any) =>
+    api.post(`/prompts/prompts/${id}/experiments`, payload),
+}
+
+// ==================== Evals API ====================
+export const evalsApi = {
+  getList: (params?: any) => api.get('/evals/evals', { params }),
+  getById: (id: string) => api.get(`/evals/evals/${id}`),
+  create: (payload: any) => api.post('/evals/evals', payload),
+  delete: (id: string) => api.delete(`/evals/evals/${id}`),
+  run: (id: string, payload?: any) => api.post(`/evals/evals/${id}/run`, payload || {}),
+}
+
+// ==================== MCP API ====================
+export const mcpApi = {
+  getConnections: () => api.get('/mcp/connections'),
+  getConnection: (name: string) => api.get(`/mcp/connections/${name}`),
+  createConnection: (payload: any) => api.post('/mcp/connections', payload),
+  deleteConnection: (name: string) => api.delete(`/mcp/connections/${name}`),
+  invokeTool: (name: string, toolName: string, payload: any) =>
+    api.post(`/mcp/connections/${name}/tools/${toolName}`, payload),
 }
 
 // ==================== Analytics API ====================

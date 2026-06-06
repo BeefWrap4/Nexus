@@ -116,7 +116,7 @@ function openApproval(task: HITLTask) {
 
 async function handleApprove(taskId: string, payload?: any) {
   try {
-    await api.post(`/hitl/${taskId}/approve`, payload)
+    await api.post(`/hitl/tasks/${taskId}/respond`, { ...payload, decision: 'approve' })
     message.success('任务已审批通过')
     await fetchTasks()
   } catch {
@@ -126,7 +126,7 @@ async function handleApprove(taskId: string, payload?: any) {
 
 async function handleReject(taskId: string) {
   try {
-    await api.post(`/hitl/${taskId}/reject`)
+    await api.post(`/hitl/tasks/${taskId}/respond`, { decision: 'reject' })
     message.warning('任务已拒绝')
     await fetchTasks()
   } catch {
@@ -137,7 +137,7 @@ async function handleReject(taskId: string) {
 async function fetchTasks() {
   loading.value = true
   try {
-    const { data } = await api.get('/hitl')
+    const { data } = await api.get('/hitl/tasks')
     tasks.value = data
   } catch {
     message.error('获取任务列表失败')
