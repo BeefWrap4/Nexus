@@ -146,11 +146,34 @@ fi
 # ---------------------------------------------------------------------------
 load_env() {
     if [ -f "${PROJECT_ROOT}/.env" ]; then
+        # 用 python 解析 .env，跳过 <...> 占位符（避免 bash 把 < 当 stdin 重定向）
+        # 然后导出为合法的 KEY=VAL 形式
+        local env_tmp
+        env_tmp=$(mktemp)
+        trap 'rm -f "$env_tmp"' RETURN
+
+        python3 - "$PROJECT_ROOT/.env" > "$env_tmp" <<'PYEOF'
+import re, shlex, sys
+with open(sys.argv[1]) as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, _, v = line.partition('=')
+        k = k.strip()
+        v = v.strip()
+        # 跳过模板占位符（如 <REPLACE_...>、<YOUR_...>、<LEAVE_BLANK_...>）
+        if re.match(r'^<[A-Z0-9_]+>$', v):
+            continue
+        # 用 shlex.quote 防止值里的空格、$ 等造成注入
+        print(f'export {k}={shlex.quote(v)}')
+PYEOF
+
         set -a
         # shellcheck source=/dev/null
-        source "${PROJECT_ROOT}/.env"
+        source "$env_tmp"
         set +a
-        echo -e "${GREEN}✓ .env loaded${NC}"
+        echo -e "${GREEN}✓ .env loaded (placeholders skipped)${NC}"
     else
         echo -e "${YELLOW}⚠ .env file not found${NC}"
     fi

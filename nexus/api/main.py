@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -29,6 +30,14 @@ def _validate_production_security() -> None:
     """生产环境启动前安全校验.
 
     确保关键安全配置已正确设置，防止使用默认值部署到生产环境。
+    
+    校验项:
+    1. SECRET_KEY 强度检查（禁止使用默认值，长度≥32字符）
+    2. 数据库 URL 检查（禁止使用 SQLite）
+    3. DEV_API_KEY 检查（生产环境禁止设置）
+    4. CORS 配置检查（生产环境禁止使用通配符 *）
+    5. DEBUG 模式检查（生产环境必须关闭）
+    6. Redis 连接检查（生产环境必须配置）
     """
     import logging
 
@@ -59,6 +68,40 @@ def _validate_production_security() -> None:
             "SECURITY ERROR: DEV_API_KEY must not be set in production. "
             "Remove it from environment variables."
         )
+
+    # CORS 配置校验（生产环境禁止使用通配符）
+    if settings.ENVIRONMENT == "production" and "*" in settings.CORS_ALLOWED_ORIGINS:
+        raise RuntimeError(
+            "SECURITY ERROR: CORS wildcard (*) is not allowed in production. "
+            "Configure specific allowed origins in CORS_ALLOWED_ORIGINS."
+        )
+
+    # DEBUG 模式校验（生产环境必须关闭）
+    if settings.DEBUG:
+        raise RuntimeError(
+            "SECURITY ERROR: DEBUG mode must be disabled in production. "
+            "Set DEBUG=false in environment variables."
+        )
+
+    # Redis 连接校验（生产环境必须配置）
+    if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+        logger.info("Redis configured in sentinel mode with %d sentinels",
+                   len(settings.REDIS_SENTINEL_HOSTS.split(',')))
+    elif not settings.REDIS_URL or "localhost" in settings.REDIS_URL.lower():
+        logger.warning(
+            "WARNING: Redis URL points to localhost in production. "
+            "Ensure this is intentional and properly secured."
+        )
+
+    # JWT 密钥校验（与 SECRET_KEY 同等强度，禁止使用开发默认值）
+    # 注意：Settings.validate_jwt_secret_key() 在 ENVIRONMENT=="production" 时已自动校验强度和默认值
+    try:
+        settings.validate_jwt_secret_key()
+    except ValueError as e:
+        raise RuntimeError(
+            f"SECURITY ERROR: {str(e)} "
+            f"Set a strong JWT_SECRET_KEY (≥32 chars) via environment variable."
+        ) from e
 
     logger.info("Production security validation passed")
 
@@ -148,9 +191,19 @@ async def lifespan(app: FastAPI):
     if tracer:
         app.state.tracer = tracer
 
-    # 生产环境安全校验
+    # 应用启动时自动运行安全校验（所有环境）
+    # 生产环境执行完整校验，开发/测试环境仅执行基础校验
     if settings.ENVIRONMENT == "production":
         _validate_production_security()
+    else:
+        # 非生产环境也进行基础安全检查
+        logger = logging.getLogger(__name__)
+        if settings.DEV_API_KEY:
+            logger.warning(
+                "DEV_API_KEY is set in %s environment. "
+                "This is acceptable for development but should NEVER be used in production.",
+                settings.ENVIRONMENT,
+            )
 
     # 确保开发环境 API Key 在数据库中有记录（DEV_API_KEY 回退需要）
     if settings.DEV_API_KEY and settings.ENVIRONMENT != "production":
@@ -158,8 +211,12 @@ async def lifespan(app: FastAPI):
 
     await init_arq_pool()
 
-    # Redis 客户端（用于 EventBus 和通用缓存）
-    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    # Redis 客户端（用于 EventBus 和通用缓存）- 支持哨兵模式
+    if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+        from nexus.cache.redis_client import get_redis_client
+        redis_client = get_redis_client()
+    else:
+        redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     app.state.redis = redis_client
 
     # EventBus（带 Redis，用于跨进程通信）
@@ -407,7 +464,7 @@ async def metrics():
 
 
 # 导入并注册路由（使用Service层）
-from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts, evals, code_review, github_webhook, crews, auto
+from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts, evals, code_review, github_webhook, crews, auto, auth, dashboard
 from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
@@ -423,6 +480,8 @@ app.include_router(code_review.router, prefix="/api/v1/code-review", tags=["code
 app.include_router(github_webhook.router, prefix="/api/v1", tags=["github"])
 app.include_router(crews.router, prefix="/api/v1/crews", tags=["crews"])
 app.include_router(auto.router, prefix="/api/v1/auto", tags=["auto"])
+app.include_router(auth.router, prefix="/api/v1", tags=["authentication"])  # Auth路由
+app.include_router(dashboard.router, prefix="/api/v1", tags=["dashboard"])  # Dashboard统计路由
 app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）
 
 

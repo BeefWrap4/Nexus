@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,50 @@ def _to_response(run) -> RunResponse:
         started_at=run.started_at.isoformat() if run.started_at else "",
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
     )
+
+
+@router.get("")
+async def list_runs(
+    limit: int = 10,
+    skip: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取最近执行记录列表."""
+    from nexus.models import WorkflowRun, Workflow
+    from sqlalchemy import select, desc
+    
+    tenant_id = UUID(current_user.get("tenant_id", "default"))
+    
+    # 查询runs并关联workflow名称
+    stmt = (
+        select(WorkflowRun, Workflow.name.label("workflow_name"))
+        .outerjoin(Workflow, WorkflowRun.workflow_id == Workflow.id)
+        .where(WorkflowRun.tenant_id == tenant_id)
+        .order_by(desc(WorkflowRun.started_at))
+        .offset(skip)
+        .limit(limit)
+    )
+    
+    result = await db.execute(stmt)
+    runs_with_names = result.all()
+    
+    return [
+        {
+            "id": str(run.id),
+            "workflow_id": str(run.workflow_id),
+            "workflow_name": workflow_name or "Unknown",
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "duration_seconds": (
+                (run.completed_at - run.started_at).total_seconds()
+                if run.completed_at and run.started_at
+                else None
+            ),
+        }
+        for run, workflow_name in runs_with_names
+    ]
 
 
 @router.get("/{run_id}")
@@ -84,17 +128,63 @@ async def pause_run(
 
 @router.post("/{run_id}/resume")
 async def resume_run(
+    request: Request,
     run_id: UUID,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """恢复执行."""
+    """恢复执行 — 真正把 resume_workflow_job 排进 ARQ 队列.
+
+    Bug fix (S1-1): 之前这个端点只改 status=RUNNING，从不触发重跑，
+    导致 HITL pause→resume 在生产环境永远卡住。修复：改 status 后立即
+    通过 ARQ pool 把 resume_workflow_job 排进队列，Worker 进程会
+    加载 workflow 定义 + checkpoint 并实际调 engine.resume()。
+    """
     tenant_id = UUID(current_user.get("tenant_id", "default"))
+
+    # 1. 验证 run 存在 + 改 status
     run = await run_service.update_status(db, run_id, tenant_id, RunStatus.RUNNING.value)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    return {"run_id": str(run.id), "status": run.status}
+    # 2. 解析 human_input（可选 body：{"approval": "approved", "notes": "..."}）
+    human_input: dict = {}
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            human_input = body
+    except Exception:
+        pass  # body 不是 JSON 或为空，使用空 dict
+
+    # 3. 把 resume 任务排进 ARQ 队列
+    try:
+        from nexus.jobs.pool import get_arq_pool
+        arq_pool = get_arq_pool()
+        if arq_pool is None:
+            raise HTTPException(
+                status_code=503,
+                detail="ARQ pool not initialized",
+            )
+        await arq_pool.enqueue_job(
+            "resume_workflow_job",
+            run_id=str(run_id),
+            human_input=human_input,
+            tenant_id=str(tenant_id),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 队列入队失败也要返回错误，不要假装成功
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to enqueue resume job: {str(e)}",
+        ) from e
+
+    return {
+        "run_id": str(run.id),
+        "status": run.status,
+        "resume_enqueued": True,
+    }
 
 
 @router.post("/{run_id}/retry")

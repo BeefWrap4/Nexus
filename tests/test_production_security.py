@@ -47,7 +47,12 @@ class TestProductionSecurity:
         """有效生产配置应通过校验"""
         from nexus import config
         monkeypatch.setattr(config.settings, "SECRET_KEY", "a" * 32)
+        # 修复 (S1-4 回归): production 要求 DEBUG=false、CORS 不含 *、JWT key 是强随机
+        monkeypatch.setattr(config.settings, "DEBUG", False)
+        monkeypatch.setattr(config.settings, "CORS_ALLOWED_ORIGINS", ["https://example.com"])
         monkeypatch.setattr(config.settings, "ENVIRONMENT", "production")
         monkeypatch.setattr(config.settings, "DATABASE_URL", "postgresql://test")
         monkeypatch.setattr(config.settings, "DEV_API_KEY", None)
+        # 配一个强随机 JWT key 让 S1-4 的新检查通过
+        monkeypatch.setattr(config.settings, "JWT_SECRET_KEY", "a" * 64)
         _validate_production_security()  # 不应抛出异常

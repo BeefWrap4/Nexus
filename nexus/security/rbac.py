@@ -25,7 +25,9 @@ class RBACMiddleware(BaseHTTPMiddleware):
         """处理请求，接入 PermissionEngine 进行权限验证."""
         # 跳过公开端点
         PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/metrics"}
-        if request.url.path in PUBLIC_PATHS or request.url.path.startswith("/docs/"):
+        if (request.url.path in PUBLIC_PATHS or 
+            request.url.path.startswith("/docs/") or
+            request.url.path.startswith("/api/v1/auth/")):  # Auth路由豁免认证
             return await call_next(request)
 
         # 获取用户信息
@@ -66,6 +68,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
         KNOWN_RESOURCES = {
             "workflows", "agents", "tools", "crews", "runs", "hitl", "tenants",
             "prompts", "evals", "code-review", "traces", "mcp", "auto",
+            "dashboard",
         }
         for part in parts:
             if part in KNOWN_RESOURCES:

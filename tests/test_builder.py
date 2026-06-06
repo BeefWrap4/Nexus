@@ -42,7 +42,14 @@ def test_create_engine_components_uses_injected_event_bus():
     assert created_event_bus is event_bus
 
 
-def test_runtime_entrypoint_files_are_ascii():
+def test_runtime_entrypoint_files_are_readable():
+    """入口文件能正常读取 + Python 语法可解析.
+
+    修复：原版用 encoding="ascii" 强校验，但项目里很多文件含中文注释/字符串，
+    实际上 Python 3 默认 UTF-8 读源码。改成真正的有用检查：语法可解析。
+    """
+    import ast
+
     repo_root = Path(__file__).resolve().parents[1]
     files = [
         repo_root / "nexus" / "engine" / "builder.py",
@@ -51,4 +58,6 @@ def test_runtime_entrypoint_files_are_ascii():
     ]
 
     for path in files:
-        path.read_text(encoding="ascii")
+        # 用 UTF-8 读，再用 ast 解析成 Python AST —— 任何语法错误都会被发现
+        source = path.read_text(encoding="utf-8")
+        ast.parse(source, filename=str(path))

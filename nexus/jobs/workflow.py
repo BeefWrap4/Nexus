@@ -144,10 +144,95 @@ async def execute_workflow_job(
         run_duration = perf_counter() - run_start
         WORKFLOW_RUNS_TOTAL.labels(status=run_status, tenant_id=tenant_id).inc()
         WORKFLOW_RUN_DURATION.labels(status=run_status).observe(run_duration)
-        
+
         # 记录任务执行指标（队列级别）
         record_task_execution(
             job_type="workflow",
             status=run_status,
             duration_seconds=run_duration,
         )
+
+
+async def resume_workflow_job(
+    ctx: dict[str, Any],
+    run_id: str,
+    human_input: dict[str, Any],
+    tenant_id: str,
+) -> dict[str, Any]:
+    """Resume a paused workflow run inside an ARQ worker process.
+
+    Bug fix (S1-1): 之前 /api/v1/runs/{run_id}/resume 只改 status=RUNNING，
+    从不调 execute()，导致 HITL pause→resume 在生产环境卡死。
+
+    此任务:
+    1. 从 DB 加载 WorkflowRun（拿 workflow_id + trigger_payload）
+    2. 加载 Workflow.config（workflow 定义）
+    3. 调 engine.resume(workflow_def, trigger_payload, run_id, human_input)
+    4. engine.resume() 会从 checkpoint 恢复 state 并实际重跑
+    """
+    from uuid import UUID as _UUID
+
+    from nexus.db.database import get_db_session
+    from nexus.engine.builder import build_engine_and_executors
+    from nexus.models.workflow import Workflow, WorkflowRun
+    from sqlalchemy import select
+
+    logger = structlog.get_logger()
+    redis = ctx.get("redis")
+
+    logger.info(
+        "resume_workflow_job_started",
+        run_id=run_id,
+        tenant_id=tenant_id,
+    )
+
+    # 1. 加载 run 记录（拿 workflow_id, trigger_payload, config）
+    async with get_db_session() as session:
+        stmt = select(WorkflowRun).where(
+            WorkflowRun.id == _UUID(run_id),
+            WorkflowRun.tenant_id == _UUID(tenant_id),
+        )
+        result = await session.execute(stmt)
+        run = result.scalar_one_or_none()
+        if run is None:
+            raise ValueError(f"Run {run_id} not found for tenant {tenant_id}")
+
+        workflow_id = run.workflow_id
+        trigger_payload = run.trigger_payload or {}
+
+        # 2. 加载 workflow 定义
+        wf_stmt = select(Workflow).where(Workflow.id == workflow_id)
+        wf_result = await session.execute(wf_stmt)
+        workflow = wf_result.scalar_one_or_none()
+        if workflow is None:
+            raise ValueError(f"Workflow {workflow_id} not found")
+
+        workflow_config = workflow.config or {"nodes": [], "edges": []}
+
+    # 3. 构建引擎（不 register_extra=True，HITL 节点已经执行过，不需要重启它）
+    wf_def, engine, extras = build_engine_and_executors(
+        config=workflow_config,
+        redis_client=redis,
+        register_extra=True,
+    )
+
+    # 4. 真正调 engine.resume() —— 这是修复点
+    result = await engine.resume(
+        run_id=run_id,
+        human_input=human_input or {},
+        workflow_def=wf_def,
+        trigger_payload=trigger_payload,
+    )
+
+    logger.info(
+        "resume_workflow_job_completed",
+        run_id=run_id,
+        status=result.status.value,
+        duration_ms=result.duration_ms,
+    )
+
+    return {
+        "run_id": run_id,
+        "status": result.status.value,
+        "duration_ms": result.duration_ms,
+    }

@@ -28,7 +28,11 @@ from nexus.engine.workflow_types import (
     RunResult,
     WorkflowDefinition,
 )
-from nexus.exceptions import WorkflowExecutionException, NexusErrorCode
+from nexus.exceptions import (
+    CheckpointNotFoundException,
+    WorkflowExecutionException,
+    NexusErrorCode,
+)
 from nexus.observability.metrics import WORKFLOW_RUN_DURATION
 from nexus.observability.workflow_metrics import (
     record_node_execution,
@@ -66,11 +70,15 @@ class WorkflowEngine:
         workflow_def.validate()
         workflow_def = self._auto_inject_boundary_nodes(workflow_def)
 
-        state = self.state_manager.create_state(
-            workflow_def=workflow_def,
-            trigger_payload=trigger_payload,
-            run_id=run_id,
-        )
+        # 优先复用已有 state（resume 场景），否则创建新 state
+        state = self.state_manager.get_state(run_id)
+        if state is None:
+            state = self.state_manager.create_state(
+                workflow_def=workflow_def,
+                trigger_payload=trigger_payload,
+                run_id=run_id,
+            )
+        # else: resume 场景，state 已由 resume() 注入
         graph = self._build_execution_graph(workflow_def)
 
         loop = asyncio.get_event_loop()
@@ -177,10 +185,52 @@ class WorkflowEngine:
     async def pause(self, run_id: str) -> None:
         await self.state_manager.update_status(run_id, RunStatus.PAUSED)
 
-    async def resume(self, run_id: str, human_input: dict) -> None:
+    async def resume(
+        self,
+        run_id: str,
+        human_input: dict,
+        workflow_def: "WorkflowDefinition",
+        trigger_payload: dict,
+    ) -> "RunResult":
+        """Resume a paused run — actually re-invokes execute() with the loaded state.
+
+        Bug fix (S1-1): 之前 resume() 只改 status 不调 execute()，导致 HITL 工作流
+        pause→resume 后永远卡住。修复：把 checkpoint 里的状态重新喂给 StateManager，
+        然后调 execute()，execute() 看到已有 state 会复用而不是 create_state()。
+
+        Args:
+            run_id: 工作流运行 ID
+            human_input: 来自人工审批的响应
+            workflow_def: 从 DB 加载的工作流定义
+            trigger_payload: 触发时的 payload（也来自 DB）
+        """
+        # 1. 加载 checkpoint
         state = await self.checkpoint_mgr.load(run_id)
+        if state is None:
+            raise CheckpointNotFoundException(run_id)
+
+        # 2. 注入 human_input
         state.human_input = human_input
+
+        # 3. 把 PAUSED 节点（如果有）标成 SUCCEEDED，让 super-step 看到依赖已满足
+        #    NodeStatus 没有 PAUSED，但用 SUCCEEDED 意味着 HITL 节点的"等待"已完成
+        for nid, ns in list(state.node_states.items()):
+            if ns == NodeStatus.PENDING:
+                # PENDING 节点在 pause 时可能是等审批；标成 SUCCEEDED 让后继节点能跑
+                # 实际语义：HITL 节点完成（人已审批）
+                pass  # 保留 PENDING，让 super-step 自然处理
+            # 注：完整的 HITL 节点状态机在 HITLNodeExecutor 内部维护，
+            #    这里只关心 state 全局能否让后续 super-step 推进。
+
+        # 4. 改 status
+        state.status = RunStatus.RUNNING
         await self.state_manager.update_status(run_id, RunStatus.RUNNING)
+
+        # 5. 关键：把 state 写回 StateManager，execute() 看到已有 state 会复用
+        self.state_manager.set_state(run_id, state)
+
+        # 6. 重跑 execute()，会从现有 state 继续推进
+        return await self.execute(workflow_def, trigger_payload, run_id)
 
     async def cancel(self, run_id: str) -> None:
         await self.state_manager.update_status(run_id, RunStatus.CANCELLED)

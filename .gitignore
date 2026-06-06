@@ -40,3 +40,10 @@ worktrees/
 htmlcov/
 .pytest_nexus.db
 temp_exceptions.py
+.benchmarks/
+output/
+
+# Database backups
+backups/
+*.sql.gz
+*.dump

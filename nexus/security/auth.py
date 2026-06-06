@@ -12,6 +12,7 @@ API Key 格式: nexus_<prefix>_<secret>
 
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -31,6 +32,24 @@ from nexus.security.rate_limiter import RateLimiter
 
 # 安全scheme
 security = HTTPBearer(auto_error=False)
+
+
+# ---------------------------------------------------------------------------
+# JWT 密钥管理
+# ---------------------------------------------------------------------------
+
+
+def get_jwt_signing_keys() -> list[str]:
+    """获取JWT签名密钥列表.
+
+    Returns:
+        [当前密钥, 历史密钥1, 历史密钥2, ...]
+        当前密钥用于签名，所有密钥都可用于验证。
+    """
+    keys = [settings.JWT_SECRET_KEY]
+    if settings.JWT_PREVIOUS_SECRET_KEYS:
+        keys.extend(settings.JWT_PREVIOUS_SECRET_KEYS)
+    return keys
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +141,12 @@ class AuthService:
         role: str,
         expires_delta: Optional[timedelta] = None,
     ) -> str:
-        """创建访问Token."""
+        """创建访问Token.
+
+        使用JWT_SECRET_KEY进行签名，支持密钥轮换。
+        """
         if expires_delta is None:
-            expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            expires_delta = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
 
         expire = datetime.now(timezone.utc) + expires_delta
         payload = {
@@ -135,30 +157,47 @@ class AuthService:
             "iat": datetime.now(timezone.utc),
             "type": "access",
         }
-        return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+        return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
     @staticmethod
     def create_refresh_token(user_id: str) -> str:
-        """创建刷新Token."""
-        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        """创建刷新Token.
+
+        使用JWT_SECRET_KEY进行签名，支持密钥轮换。
+        """
+        expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
         payload = {
             "sub": user_id,
             "exp": expire,
             "iat": datetime.now(timezone.utc),
             "type": "refresh",
         }
-        return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+        return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
     @staticmethod
     def verify_token(token: str) -> dict:
-        """验证Token."""
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-            return payload
-        except jwt.ExpiredSignatureError:
-            raise AuthenticationException("Token has expired")
-        except jwt.InvalidTokenError:
-            raise AuthenticationException("Invalid token")
+        """验证Token.
+
+        支持多密钥验证：先尝试当前密钥，失败后依次尝试历史密钥。
+        这允许在密钥轮换期间，旧Token仍然有效直到过期。
+        """
+        signing_keys = get_jwt_signing_keys()
+        last_error = None
+
+        for key in signing_keys:
+            try:
+                payload = jwt.decode(token, key, algorithms=[settings.JWT_ALGORITHM])
+                return payload
+            except jwt.ExpiredSignatureError:
+                # Token已过期，不再尝试其他密钥
+                raise AuthenticationException("Token has expired")
+            except jwt.InvalidTokenError as e:
+                # 记录错误，继续尝试下一个密钥
+                last_error = e
+                continue
+
+        # 所有密钥都验证失败
+        raise AuthenticationException("Invalid token")
 
     @staticmethod
     def generate_api_key(
@@ -223,25 +262,28 @@ async def get_current_user(
     # ------------------------------------------------------------------
     api_key = request.headers.get("X-API-Key")
     if api_key:
-        # 开发环境回退：配置的 DEV_API_KEY 直接通过（方便测试/文档）
-        if (
-            settings.DEV_API_KEY
-            and api_key == settings.DEV_API_KEY
-            and settings.ENVIRONMENT == "development"
-        ):
-            tenant_id = str(UUID(int=0))
-            result = await db.execute(select(Tenant).where(Tenant.slug == "default"))
-            tenant = result.scalar_one_or_none()
-            if tenant:
-                tenant_id = str(tenant.id)
+        # DEV_API_KEY 仅在开发环境用于快速测试,生产环境必须使用标准API Key流程
+        if settings.DEV_API_KEY and settings.ENVIRONMENT == "development":
+            # 开发环境允许使用DEV_API_KEY,但记录审计日志
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"DEV_API_KEY used for authentication. "
+                f"This should NOT be used in production. IP: {request.client.host}"
+            )
+            if api_key == settings.DEV_API_KEY:
+                tenant_id = str(UUID(int=0))
+                result = await db.execute(select(Tenant).where(Tenant.slug == "default"))
+                tenant = result.scalar_one_or_none()
+                if tenant:
+                    tenant_id = str(tenant.id)
 
-            return {
-                "id": "dev-api-key-user",
-                "tenant_id": tenant_id,
-                "role": "admin",
-                "auth_type": "api_key",
-                "permissions": ["*"],
-            }
+                return {
+                    "id": "dev-api-key-user",
+                    "tenant_id": tenant_id,
+                    "role": "admin",
+                    "auth_type": "dev_api_key",  # 标记为开发密钥
+                    "permissions": ["*"],
+                }
 
         # 数据库验证
         key_record = await _verify_api_key(db, api_key)
@@ -289,18 +331,33 @@ async def get_current_user(
         try:
             payload = AuthService.verify_token(credentials.credentials)
 
-            # JWT rate limiting — basic in-memory check (uses module-level _jwt_call_times)
+            # JWT 速率限制：优先使用 Redis 滑动窗口（跨进程），fallback 到 in-memory dict
             user_key = payload.get("sub", "unknown")
-            now = time.time()
-            if user_key not in _jwt_call_times:
-                _jwt_call_times[user_key] = []
-            _jwt_call_times[user_key] = [t for t in _jwt_call_times[user_key] if now - t < 60]
-            _jwt_call_times[user_key].append(now)
-            if len(_jwt_call_times[user_key]) > 200:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="JWT rate limit exceeded",
-                )
+            redis_client = getattr(request.app.state, "redis", None)
+            if redis_client:
+                try:
+                    limiter = RateLimiter(redis_client)
+                    await limiter.check_rate_limit(
+                        api_key=f"jwt:{user_key}",
+                        limit=200,
+                        window=60,
+                    )
+                except HTTPException as e:
+                    if e.status_code == 429:
+                        raise  # 重新抛出 429
+                    # 其他 Redis 异常不阻断认证（与 API Key 路径保持一致）
+            else:
+                # Fallback：进程内 in-memory 计数（单进程下足够）
+                now = time.time()
+                if user_key not in _jwt_call_times:
+                    _jwt_call_times[user_key] = []
+                _jwt_call_times[user_key] = [t for t in _jwt_call_times[user_key] if now - t < 60]
+                _jwt_call_times[user_key].append(now)
+                if len(_jwt_call_times[user_key]) > 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="JWT rate limit exceeded",
+                    )
 
             return {
                 "id": payload["sub"],
