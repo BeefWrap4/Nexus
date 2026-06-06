@@ -25,9 +25,10 @@ class RBACMiddleware(BaseHTTPMiddleware):
         """处理请求，接入 PermissionEngine 进行权限验证."""
         # 跳过公开端点
         PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/metrics"}
-        if (request.url.path in PUBLIC_PATHS or 
+        if (request.url.path in PUBLIC_PATHS or
             request.url.path.startswith("/docs/") or
-            request.url.path.startswith("/api/v1/auth/")):  # Auth路由豁免认证
+            request.url.path.startswith("/api/v1/auth/") or  # Auth路由豁免认证
+            request.url.path.startswith("/api/v1/webhooks/")):  # 修复 (P1 测试): webhook 用 HMAC 签名自验证, 不走 RBAC
             return await call_next(request)
 
         # 获取用户信息

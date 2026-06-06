@@ -7,12 +7,23 @@ import httpx
 import pytest
 
 API = "http://localhost:8765"
-API_KEY = "nexus_devkey_api_key_for_testing_and_docs"
+# 修复 (P1 测试): 之前硬编码 nexus_devkey_api_key_for_testing_and_docs,
+# 但实际 .env DEV_API_KEY 是 dev-48f2aa0941514808。改成从 env 读, 默认 fallback。
+import os
+API_KEY = os.environ.get("DEV_API_KEY", "dev-48f2aa0941514808")
 HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 
 
 class TestE2EIntegration:
-    """完整端到端集成测试 — 从创建到执行的完整链路."""
+    """完整端到端集成测试 — 从创建到执行的完整链路.
+
+    修复 (P1 测试): 之前没标 pytest.mark.integration, 导致跑
+    `pytest -m "not slow and not integration"` 时也被拉进, 然后因为没
+    docker 服务 / key 不匹配 etc. 一直 fail。加 mark 后 CI 默认排除。
+    """
+
+    # 修复: 让所有 test_01..test_NN 都被识别为 integration
+    pytestmark = pytest.mark.integration
 
     created_agent_id: str | None = None
     created_workflow_id: str | None = None

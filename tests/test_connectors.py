@@ -51,8 +51,12 @@ class TestFileTools:
         assert "write_file" in registry._tools
 
     @pytest.mark.asyncio
-    async def test_write_and_read_file(self, tmp_path):
+    async def test_write_and_read_file(self, tmp_path, monkeypatch):
+        from nexus.tools.connectors import file_tool
         from nexus.tools.connectors.file_tool import create_file_tools
+        # 修复 (P1 测试): S4-2 加了 chroot, _WORKSPACE_ROOT 在 import 时
+        # 锁定, 改 env 不够 — 直接 monkeypatch 模块级常量
+        monkeypatch.setattr(file_tool, "_WORKSPACE_ROOT", str(tmp_path))
         registry = ToolRegistry()
         create_file_tools(registry)
         test_file = str(tmp_path / "test.txt")
