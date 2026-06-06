@@ -223,11 +223,12 @@ async def _persist_trace(trace_data: LLMTraceData) -> None:
 def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
     """更新 Prometheus 指标."""
     try:
-        from nexus.observability.agent_metrics import record_llm_call, record_llm_retry
-        from nexus.observability.metrics import (
+        from nexus.observability.agent_metrics import (
             LLM_CALLS_TOTAL,
-            LLM_LATENCY,
+            LLM_CALL_LATENCY,
             LLM_TOKENS_TOTAL,
+            record_llm_call,
+            record_llm_retry,
         )
 
         status = "error" if trace_data.response_content.startswith("[ERROR]") else "success"
@@ -262,7 +263,7 @@ def _update_prometheus_metrics(trace_data: LLMTraceData) -> None:
             # 保留旧指标以保持向后兼容
             LLM_CALLS_TOTAL.labels(model=model, status=status, tenant_id=tenant_id).inc()
 
-            LLM_LATENCY.labels(model=model).observe(trace_data.latency_ms / 1000.0)
+            LLM_CALL_LATENCY.labels(model=model).observe(trace_data.latency_ms / 1000.0)
 
             if trace_data.prompt_tokens > 0:
                 LLM_TOKENS_TOTAL.labels(
