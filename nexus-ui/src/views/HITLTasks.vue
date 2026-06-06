@@ -137,8 +137,8 @@ async function handleReject(taskId: string) {
 async function fetchTasks() {
   loading.value = true
   try {
-    const { data } = await api.get('/hitl/tasks')
-    tasks.value = data
+    const resp = await api.get('/hitl/tasks')
+    tasks.value = resp.data
   } catch {
     message.error('获取任务列表失败')
     tasks.value = [

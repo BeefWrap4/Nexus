@@ -153,10 +153,10 @@ function formatTime(iso: string) {
 
 async function fetchRunData() {
   try {
-    const { data } = await api.get(`/runs/${runId.value}`)
-    runStatus.value = data.status || 'running'
-    if (data.node_runs) {
-      nodeRuns.value = data.node_runs
+    const resp = await api.get(`/runs/${runId.value}`)
+    runStatus.value = resp.data.status || 'running'
+    if (resp.data.node_runs) {
+      nodeRuns.value = resp.data.node_runs
     }
   } catch {
     message.error(t('monitor.fetchRunFailed'))

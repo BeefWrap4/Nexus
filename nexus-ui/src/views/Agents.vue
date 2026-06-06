@@ -118,8 +118,8 @@ const columns = [
 async function fetchAgents() {
   loading.value = true
   try {
-    const { data } = await api.get('/agents')
-    agents.value = data
+    const resp = await api.get('/agents')
+    agents.value = resp.data
   } catch {
     message.error('获取Agents失败')
     agents.value = [

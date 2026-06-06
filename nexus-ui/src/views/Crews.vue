@@ -97,8 +97,8 @@ const columns = [
 async function fetchCrews() {
   loading.value = true
   try {
-    const { data } = await api.get('/crews')
-    crews.value = data || []
+    const resp = await api.get('/crews')
+    crews.value = resp.data || []
   } catch {
     message.error('获取 Crew 列表失败')
     crews.value = []
@@ -120,7 +120,7 @@ async function runCrew() {
   }
   running.value = true
   try {
-    const { data } = await api.post(`/crews/${runningCrewId.value}/run`, {
+    const resp = await api.post(`/crews/${runningCrewId.value}/run`, {
       task_description: runTask.value,
     })
     message.success('Crew 执行完成')

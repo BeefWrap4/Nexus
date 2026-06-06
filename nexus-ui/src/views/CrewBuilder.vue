@@ -210,8 +210,8 @@ function removeAgent(index: number) {
 
 async function fetchAgents() {
   try {
-    const { data } = await api.get('/agents')
-    availableAgents.value = data || []
+    const resp = await api.get('/agents')
+    availableAgents.value = resp.data || []
   } catch {
     availableAgents.value = []
   }
@@ -220,9 +220,9 @@ async function fetchAgents() {
 async function fetchCrew() {
   if (!isEdit.value) return
   try {
-    const { data } = await api.get(`/crews/${crewId.value}`)
-    form.name = data.name
-    form.description = data.description
+    const resp = await api.get(`/crews/${crewId.value}`)
+    form.name = resp.data.name
+    form.description = resp.data.description
     form.mode = data.mode
     form.config = { ...form.config, ...data.config }
     form.agent_ids = data.agents?.map((a: any) => ({
@@ -258,7 +258,7 @@ async function saveCrew() {
       await api.put(`/crews/${crewId.value}`, payload)
       message.success('Crew 已更新')
     } else {
-      const { data } = await api.post('/crews', payload)
+      const resp = await api.post('/crews', payload)
       message.success('Crew 已创建')
       router.push(`/crews/${data.id}/edit`)
     }
@@ -277,7 +277,7 @@ async function testRun() {
   testing.value = true
   testResult.value = null
   try {
-    const { data } = await api.post(`/crews/${crewId.value}/run`, {
+    const resp = await api.post(`/crews/${crewId.value}/run`, {
       task_description: testTask.value,
     })
     testResult.value = data

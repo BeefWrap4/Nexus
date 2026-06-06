@@ -139,7 +139,7 @@ async function fetchSettings() {
     // 后端 /api/v1/settings 返 { general, llm, security } 平铺
     const resp = await api.get('/settings')
     const data = resp.data
-    if (data.general) Object.assign(generalSettings, data.general)
+    if (resp.data.general) Object.assign(generalSettings, data.general)
     if (data.llm) Object.assign(llmSettings, data.llm)
     if (data.security) Object.assign(securitySettings, data.security)
   } catch {
@@ -202,8 +202,8 @@ async function createKey() {
     return
   }
   try {
-    const { data } = await api.post('/api-keys', { name: newKeyName.value })
-    generatedKey.value = data.key
+    const resp = await api.post('/api-keys', { name: newKeyName.value })
+    generatedKey.value = resp.data.key
     await fetchSettings()
   } catch {
     message.error('生成密钥失败')

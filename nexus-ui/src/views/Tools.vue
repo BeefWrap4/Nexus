@@ -132,8 +132,8 @@ const columns = [
 async function fetchTools() {
   loading.value = true
   try {
-    const { data } = await api.get('/tools')
-    tools.value = data
+    const resp = await api.get('/tools')
+    tools.value = resp.data
   } catch {
     message.error('获取工具列表失败')
     tools.value = [
@@ -233,8 +233,8 @@ async function runTest() {
       testing.value = false
       return
     }
-    const { data } = await api.post(`/tools/${testingTool.value.id}/test`, params)
-    testResult.value = data
+    const resp = await api.post(`/tools/${testingTool.value.id}/test`, params)
+    testResult.value = resp.data
   } catch (err: any) {
     testResult.value = { error: err.response?.data?.detail || '测试失败' }
   } finally {
