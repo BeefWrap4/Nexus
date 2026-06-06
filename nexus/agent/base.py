@@ -50,6 +50,7 @@ class AgentConfig:
     tools: list[str] = field(default_factory=list)
     memory_enabled: bool = True
     enable_semantic_cache: bool = False  # Phase 9: 语义缓存开关
+    streaming: bool = False  # 修复 (S5-2): 启用 LLM 流式输出 (推到 EventBus)
 
 
 @dataclass
@@ -109,6 +110,7 @@ class BaseAgent:
         memory: Optional[AgentMemory] = None,
         tool_registry=None,
         llm_service = None,  # 修复 (S4-1): 注入 LLMService 走 fallback 链
+        event_bus = None,  # 修复 (S5-2): 用于流式 LLM chunk 推到 WebSocket
     ):
         self.config = config
         self.llm_client = llm_client or LLMClient()
@@ -124,6 +126,7 @@ class BaseAgent:
         self.decision_parser = decision_parser or DecisionParser()
         self.memory = memory
         self.tool_registry = tool_registry
+        self.event_bus = event_bus
 
     async def execute(self, task: Task, context: dict[str, Any] = None) -> AgentResult:
         """执行Agent任务（ReAct + Function Calling 模式）.
@@ -267,20 +270,83 @@ class BaseAgent:
 
             try:
                 async with self._get_semaphore():
-                    # 修复 (S4-1): 用 LLMService.generate 走 fallback 链 + retry
-                    # 修复 (S5-1): 传 messages 列表 (含 role:tool) 让 model 看完整多轮对话
-                    response = await self.llm_service.generate(
-                        system_prompt=system_prompt,
-                        user_prompt="",  # 现在走 messages 路径
-                        model=self.config.model,
-                        provider=self.config.provider,
-                        temperature=self.config.temperature,
-                        max_tokens=self.config.max_tokens,
-                        tools=openai_tools if openai_tools else None,
-                        messages=current_messages,
-                        enable_semantic_cache=self.config.enable_semantic_cache,
-                        session_id=session_id,
-                    )
+                    # 修复 (S5-2): 流式 vs 非流式
+                    if self.config.streaming and self.event_bus:
+                        # 流式：每个 chunk 立即推到 EventBus，浏览器能看到 typer 效果
+                        accumulated_content = ""
+                        accumulated_reasoning = ""
+                        final_response = None
+                        run_id = ctx.get("run_id") or "no-run-id"
+                        async for chunk in self.llm_service.stream_generate(
+                            system_prompt=system_prompt,
+                            user_prompt="",
+                            model=self.config.model,
+                            provider=self.config.provider,
+                            temperature=self.config.temperature,
+                            max_tokens=self.config.max_tokens,
+                            tools=openai_tools if openai_tools else None,
+                            messages=current_messages,
+                            enable_semantic_cache=self.config.enable_semantic_cache,
+                            session_id=session_id,
+                            context={"tenant_id": ctx.get("tenant_id")},
+                        ):
+                            accumulated_content += chunk.content or ""
+                            accumulated_reasoning += chunk.reasoning_content or ""
+                            await self.event_bus.publish({
+                                "type": "llm_stream_chunk",
+                                "run_id": run_id,
+                                "node_id": f"agent_{self.config.name}",
+                                "content": chunk.content,
+                                "reasoning_content": chunk.reasoning_content,
+                                "iteration": iteration,
+                            })
+                            if chunk.finish_reason:
+                                final_response = chunk
+                        # 流式结束后用累积的 content 构造 LLMResponse 给 decision_parser
+                        from nexus.agent.llm_client import LLMResponse
+                        # 把 stream 期间累积的 tool_call dict 收集成 list
+                        tool_calls_list = []
+                        if final_response is not None:
+                            tc = getattr(final_response, "tool_call", None)
+                            if isinstance(tc, dict):
+                                tool_calls_list = [tc]
+                            elif isinstance(tc, list):
+                                tool_calls_list = tc
+                        model_str = final_response.model if final_response else ""
+                        if not isinstance(model_str, str):
+                            model_str = ""
+                        response = LLMResponse(
+                            content=accumulated_content,
+                            reasoning_content=accumulated_reasoning,
+                            tool_calls=tool_calls_list,
+                            model=model_str,
+                            raw={"choices": [{"message": {
+                                "role": "assistant",
+                                "content": accumulated_content,
+                            }, "finish_reason": "stop"}]},
+                        )
+                        # 推 stream_end 让前端能 finalize UI
+                        await self.event_bus.publish({
+                            "type": "llm_stream_end",
+                            "run_id": run_id,
+                            "node_id": f"agent_{self.config.name}",
+                            "total_chars": len(accumulated_content),
+                        })
+                    else:
+                        # 非流式：原有路径
+                        response = await self.llm_service.generate(
+                            system_prompt=system_prompt,
+                            user_prompt="",  # 现在走 messages 路径
+                            model=self.config.model,
+                            provider=self.config.provider,
+                            temperature=self.config.temperature,
+                            max_tokens=self.config.max_tokens,
+                            tools=openai_tools if openai_tools else None,
+                            messages=current_messages,
+                            enable_semantic_cache=self.config.enable_semantic_cache,
+                            session_id=session_id,
+                            context={"tenant_id": ctx.get("tenant_id")},
+                        )
             except Exception as e:
                 raise LLMCallException(str(e), self.config.provider)
 

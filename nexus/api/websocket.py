@@ -109,6 +109,8 @@ def subscribe_websocket_to_eventbus(event_bus: EventBus, conn_mgr: ConnectionMan
             "hitl_cancelled",
             "stream_chunk",
             "stream_end",
+            "llm_stream_chunk",  # 修复 (S5-2): LLM 流式 chunk
+            "llm_stream_end",  # 修复 (S5-2): LLM 流式结束
             "crew_step",
             "crew_complete",
             "crew_error",

@@ -200,16 +200,12 @@ class LLMService:
         tenant_id = (context or {}).get("tenant_id")
         if tenant_id:
             try:
-                from nexus.billing.meter import UsageMeter
-                # 简单的进程内检查（生产应换 DbUsageMeter 持久化）
-                meter = UsageMeter()
-                # 估算本次调用的 token 数（粗略：system + user 字符数 / 4）
-                estimated_tokens = (len(system_prompt) + len(user_prompt)) // 4
-                # 加 max_tokens 预算
-                max_tokens = kwargs.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS)
-                estimated_tokens += max_tokens
-
-                ok, msg = meter.check_quota(
+                # 修复 (S4-3 持久化): 用 DbUsageMeter 替代内存版，
+                # 这样配额检查跨进程/重启都生效（生产真实场景）
+                from nexus.billing.meter import DbUsageMeter
+                meter = DbUsageMeter()
+                # 检查配额（async — DbUsageMeter 真查 PG）
+                ok, msg = await meter.check_quota(
                     tenant_id=tenant_id,
                     metric="tokens",
                 )
@@ -220,6 +216,11 @@ class LLMService:
                         metric="tokens",
                         limit_used=msg,
                     )
+
+                # 估算本次调用的 token 数（粗略：system + user 字符数 / 4）
+                estimated_tokens = (len(system_prompt) + len(user_prompt)) // 4
+                max_tokens = kwargs.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS)
+                estimated_tokens += max_tokens
 
                 # 设置 usage 上下文，response 后会回填
                 # (详细记录由 LLMClient.call 完成后做)

@@ -404,7 +404,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # 数据库
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      # DATABASE_URL: 直连 postgres (默认) 或通过 pgbouncer (启动 pgbouncer profile 后改成 @pgbouncer:6432)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
       DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
@@ -497,7 +498,8 @@ services:
       DEBUG: ${DEBUG:-false}
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      # DATABASE_URL: 直连 postgres (默认) 或通过 pgbouncer (启动 pgbouncer profile 后改成 @pgbouncer:6432)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
       # Redis (P2高可用架构 - 哨兵模式)
       REDIS_SENTINEL_HOSTS: nexus-redis-sentinel-1:26379,nexus-redis-sentinel-2:26380,nexus-redis-sentinel-3:26381
@@ -806,6 +808,62 @@ services:
         limits:
           cpus: '0.5'
           memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # pgbouncer (连接池治理 — 修复 S5-3)
+  # ---------------------------------------------------------------------------
+  # 用途：复用 Postgres 连接，复用 app 的 pool_size=10+max_overflow=20 配置
+  # 避免 2 worker × 2 API × 30 = 120 连接打到 Postgres max_connections=100
+  # ---------------------------------------------------------------------------
+  pgbouncer:
+    # pgbouncer/pgbouncer 用 env vars 启动（不读 ini 文件）
+    image: pgbouncer/pgbouncer:latest
+    container_name: nexus-pgbouncer
+    restart: unless-stopped
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    environment:
+      # entrypoint 重新生成 pgbouncer.ini — 配合 auth_type=any 需要 forced user
+      DATABASES_HOST: postgres
+      DATABASES_PORT: "5432"
+      DATABASES_DB: nexus
+      DATABASES_USER: nexus
+      DATABASES_PASSWORD: nexus_test_pwd
+      # 修复：DATABASES_AUTH_USER 让 pgbouncer 用 nexus 身份连上游 Postgres
+      # (默认 admin user 'postgres' 在 compose 里不存在)
+      DATABASES_AUTH_USER: nexus
+      # 池配置（entrypoint 读这些写进生成的 ini）
+      DATABASES_POOL_MODE: transaction
+      PGBOUNCER_AUTH_TYPE: trust
+      PGBOUNCER_DEFAULT_POOL_SIZE: "20"
+      PGBOUNCER_MIN_POOL_SIZE: "5"
+      PGBOUNCER_MAX_CLIENT_CONN: "300"
+      MAX_CLIENT_CONN: "300"
+      DEFAULT_POOL_SIZE: "20"
+      MIN_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_TIMEOUT: "3"
+      SERVER_LIFETIME: "3600"
+      SERVER_IDLE_TIMEOUT: "600"
+      # 认证 (trust 模式 — 密码已在 Postgres 端检查)
+      AUTH_TYPE: trust
+      # 监听
+      LISTEN_PORT: "6432"
+      LISTEN_ADDR: "0.0.0.0"
+      # admin
+      ADMIN_USERS: nexus
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+    profiles:
+      - pgbouncer
 
 # =============================================================================
 # Volumes
