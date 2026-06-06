@@ -4,6 +4,10 @@ import { message } from 'ant-design-vue'
 const api = axios.create({
   baseURL: (import.meta as any).env.VITE_API_BASE_URL || '/api/v1',
   timeout: 30000,
+  // 修复 (前端 Bug): FastAPI 对 /api/v1/agents (无尾斜杠) 回 307 → /api/v1/agents/
+  // 浏览器/axios 默认不跟随 307, 这里设 maxRedirects=5 作为兜底 (实际主要靠
+  // API 端双路由来避免 307)
+  maxRedirects: 5,
   headers: {
     'Content-Type': 'application/json',
   },

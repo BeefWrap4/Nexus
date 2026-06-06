@@ -61,6 +61,9 @@ def _to_response(agent) -> AgentResponse:
 
 
 @router.get("/")
+@router.get("")  # 修复 (前端 CORS Bug): GET /api/v1/agents (无尾斜杠) 之前 307 到
+# 有尾斜杠, 但浏览器重发不保留 Authorization header, 401, 拦截器清 token
+# 跳到 /login。直接挂两条路由避免 307。
 async def list_agents(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),

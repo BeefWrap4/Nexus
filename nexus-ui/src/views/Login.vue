@@ -38,7 +38,15 @@ async function handleLogin() {
   loading.value = true
   try {
     const res = await authApi.login({ email: form.email, password: form.password })
-    auth.setToken(res.data.token)
+    // 修复 (前端 Bug): 后端 OAuth2 风格返回 access_token, 不是 token
+    // (res.data 已经是完整后端 payload, 因为没装响应包装拦截器)
+    auth.setToken(res.data.access_token)
+    if (res.data.refresh_token) {
+      localStorage.setItem('nexus_refresh_token', res.data.refresh_token)
+    }
+    if (res.data.user) {
+      auth.setUser(res.data.user)
+    }
     message.success('Login successful')
     router.push('/dashboard')
   } catch (err: any) {

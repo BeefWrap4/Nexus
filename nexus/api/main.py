@@ -287,12 +287,65 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# 修复 (前端 307 丢 auth): 浏览器 GET /api/v1/tools (无尾斜杠) 之前 FastAPI
+# 回 307 → /api/v1/tools/, 但浏览器规范: 跨源 307 不保留 sensitive headers
+# (Authorization 算 sensitive), 第二次请求没 token → 401 → 跳 /login。
+# 解法: 中间件在内部把 /api/v1/tools 改写到 /api/v1/tools/, 避免 307。
+# 注意 1: 只对 safe methods (GET/HEAD/OPTIONS) 改写, POST 跟它无关。
+# 注意 2: 只对 list-style 集合根改写 (如 /api/v1/tools, /api/v1/agents),
+# 绝对不能改写子路径 (如 /api/v1/dashboard/stats, /api/v1/runs/xxx),
+# 否则 FastAPI 找不到路由会无限重定向。
+_TRAILING_SLASH_LIST_PATHS = frozenset({
+    "/api/v1/agents",
+    "/api/v1/workflows",
+    "/api/v1/tools",
+    "/api/v1/crews",
+    # 注: /api/v1/runs /dashboard/stats /evals /mcp /hitl /prompts /traces
+    # 这些 router 在 runs.py / dashboard.py 等用 @router.get("") 注册, canonical
+    # 路径无尾斜杠。如果加到上面集合, 中间件会改写到 /runs/, 但 router 里没
+    # / 路径, FastAPI 再 307 回去, 死循环。
+    "/api/v1/agents",
+    "/api/v1/workflows",
+    "/api/v1/tools",
+    "/api/v1/crews",
+})
+
+
+@app.middleware("http")
+async def _normalize_trailing_slash(request: Request, call_next):
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        path = request.url.path
+        # 严格匹配: path 必须在已知 list 路径里
+        if path in _TRAILING_SLASH_LIST_PATHS:
+            new_path = path + "/"
+            request.scope["path"] = new_path
+            # raw_path 是 ASGI 层的 byte string, 必须包含 query string (如果有)
+            # 不然 query 丢了。但 query string 在 scope["query_string"] 里,
+            # raw_path 只要 path 部分。
+            request.scope["raw_path"] = new_path.encode("latin-1")
+    return await call_next(request)
+
 # CORS中间件
 _cors_origins = (
     ["*"]
     if settings.ENVIRONMENT == "development"
     else settings.CORS_ALLOWED_ORIGINS
 )
+# 修复 (前端 CORS Bug): CORS 中间件必须最外层, 否则 OPTIONS preflight
+# 先被 RBAC 看到, 没有 auth header → 401, 没有 CORS headers, 浏览器 CORS error。
+# FastAPI add_middleware 是反向入栈 (后加的在外), 所以 CORS 必须最后 add。
+# 顺序: Prometheus (最内) → RBAC → CORS (最外)
+# RBAC 顺序: 先于 Prometheus 是为了让 RBAC 不被 Prometheus 中间件拦截 metric
+
+# RBAC 中间件 (先加, 在内层)
+app.add_middleware(RBACMiddleware)
+
+# Prometheus 指标中间件 (中间层)
+from nexus.observability.metrics import PrometheusMiddleware, metrics_endpoint
+app.add_middleware(PrometheusMiddleware)
+
+# CORS 中间件 (最后加, 最外层 — OPTIONS preflight 一定先到这里)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -300,13 +353,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# RBAC中间件
-app.add_middleware(RBACMiddleware)
-
-# Prometheus 指标中间件
-from nexus.observability.metrics import PrometheusMiddleware, metrics_endpoint
-app.add_middleware(PrometheusMiddleware)
 
 
 # 全局异常处理
