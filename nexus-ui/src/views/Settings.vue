@@ -134,7 +134,11 @@ function formatTime(iso: string) {
 
 async function fetchSettings() {
   try {
-    const { data } = await api.get('/settings')
+    // axios 响应拦截器直接 return response (没 unwrap), 所以 await api.get(...)
+    // 拿到的是 AxiosResponse { data, status, ... }, 真 body 在 .data 里
+    // 后端 /api/v1/settings 返 { general, llm, security } 平铺
+    const resp = await api.get('/settings')
+    const data = resp.data
     if (data.general) Object.assign(generalSettings, data.general)
     if (data.llm) Object.assign(llmSettings, data.llm)
     if (data.security) Object.assign(securitySettings, data.security)
@@ -142,8 +146,9 @@ async function fetchSettings() {
     // use defaults
   }
   try {
-    const { data } = await api.get('/api-keys')
-    apiKeys.value = data
+    // 同上: /api/v1/api-keys 返 list, 在 resp.data 里
+    const resp = await api.get('/api-keys')
+    apiKeys.value = resp.data
   } catch {
     // use defaults
   }

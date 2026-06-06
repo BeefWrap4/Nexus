@@ -277,6 +277,24 @@ watch(formData, (newVal, oldVal) => {
 
 // 初始化
 initFormData()
+
+// 修复: 父组件 (Settings.vue) onMounted 时调 fetchSettings (async),
+// 父组件 reactive 之后再变化时, 这里要 watch 重新 init 才能反映到表单。
+// 修前: 组件挂载时同步 init 一次, 之后父组件改 initialValues 没用, 表单卡在默认值。
+watch(
+  () => props.initialValues,
+  (newVal) => {
+    if (newVal && Object.keys(newVal).length > 0) {
+      // 只在 initialValues 真有值时重新 init (避免空 {} 把表单清空)
+      Object.keys(newVal).forEach(key => {
+        if (newVal[key] !== undefined) {
+          formData[key] = newVal[key]
+        }
+      })
+    }
+  },
+  { deep: true },
+)
 </script>
 
 <style scoped>
