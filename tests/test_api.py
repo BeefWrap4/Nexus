@@ -178,7 +178,12 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping get test")
+            # 修复 (S3-5): 静默 skip 会让 create 端点的回归不发出任何信号
+            # 改为 hard fail，让 CI 真的把这个标红
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -204,7 +209,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping update test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -231,7 +239,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping delete test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -260,7 +271,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping trigger test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -288,7 +302,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping list runs test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -313,7 +330,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping version test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -339,7 +359,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping list versions test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -364,7 +387,10 @@ class TestWorkflowRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping clone test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         wf_id = created["id"]
@@ -442,7 +468,10 @@ class TestAgentRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping update test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         agent_id = created["id"]
@@ -469,7 +498,10 @@ class TestAgentRoutes:
             headers=auth_headers,
         )
         if create_resp.status_code not in (200, 201):
-            pytest.skip("Create failed, skipping delete test")
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={create_resp.status_code}, "
+                f"body={create_resp.text[:200]}"
+            )
 
         created = create_resp.json()
         agent_id = created["id"]
@@ -560,7 +592,12 @@ class TestRunRoutes:
             headers=auth_headers,
         )
         if wf_resp.status_code not in (200, 201):
-            pytest.skip("Workflow create failed, skipping lifecycle test")
+            # 修复 (S3-5): 静默 skip 会让 create 端点的回归不发出任何信号
+            # 改为 hard fail，让 CI 真的把这个标红
+            pytest.fail(
+                f"Create workflow endpoint regressed: status={wf_resp.status_code}, "
+                f"body={wf_resp.text[:200]}"
+            )
 
         wf_id = wf_resp.json()["id"]
 

@@ -260,7 +260,11 @@ def workflow_engine(
     mock_variable_pool,
     mock_router_engine,
 ) -> WorkflowEngine:
-    """提供配置好的WorkflowEngine实例（使用Mock组件）."""
+    """提供配置好的WorkflowEngine实例（使用Mock组件）.
+
+    适用于纯逻辑测试（不依赖 Redis / S3）。
+    集成测试请用 `workflow_engine_real` fixture。
+    """
     engine = WorkflowEngine(
         state_manager=mock_state_manager,
         event_bus=mock_event_bus,
@@ -269,6 +273,32 @@ def workflow_engine(
         router_engine=mock_router_engine,
     )
     return engine
+
+
+@pytest.fixture(scope="function")
+def workflow_engine_real() -> WorkflowEngine:
+    """S3-3: 真实组件 WorkflowEngine（StateManager/EventBus/CheckpointManager 内存模式）.
+
+    与 `workflow_engine`（mock 版）的区别：
+    - StateManager 使用真实实现，状态真的写入内存 dict
+    - EventBus 使用真实实现，发布事件真的触发本地 subscriber
+    - CheckpointManager 使用真实内存实现
+    - VariablePool 和 RouterEngine 仍然用真实实现（之前也是）
+
+    适用：集成测试 — 验证 DAG 调度 + 状态生命周期 + 事件广播真的工作。
+    不需要 Redis / S3，纯进程内运行。
+    """
+    state_manager = StateManager(redis_client=None)  # 内存模式
+    event_bus = EventBus(redis_client=None)  # 内存模式
+    checkpoint_mgr = CheckpointManager(s3_client=None)  # 全内存
+
+    return WorkflowEngine(
+        state_manager=state_manager,
+        event_bus=event_bus,
+        checkpoint_mgr=checkpoint_mgr,
+        variable_pool=VariablePool(),
+        router_engine=RouterEngine(),
+    )
 
 
 # ---------------------------------------------------------------------------
