@@ -511,6 +511,8 @@ async def metrics():
 
 # 导入并注册路由（使用Service层）
 from nexus.api.routes import workflows, agents, tools, runs, hitl_tasks, mcp, traces, prompts, evals, code_review, github_webhook, crews, auto, auth, dashboard
+# 别名: 不能用 `settings` 直接 import, 会跟 `from nexus.config import settings` 撞名
+from nexus.api.routes import settings as settings_router  # noqa: E402
 from nexus.api.websocket import router as websocket_router
 
 app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["workflows"])
@@ -526,6 +528,9 @@ app.include_router(code_review.router, prefix="/api/v1/code-review", tags=["code
 app.include_router(github_webhook.router, prefix="/api/v1", tags=["github"])
 app.include_router(crews.router, prefix="/api/v1/crews", tags=["crews"])
 app.include_router(auto.router, prefix="/api/v1/auto", tags=["auto"])
+# 修复 (前端 Settings.vue 404): 注册 settings router, 提供 /api/v1/settings + /api-keys
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(settings_router.api_keys_router, prefix="/api/v1", tags=["api-keys"])
 app.include_router(auth.router, prefix="/api/v1", tags=["authentication"])  # Auth路由
 app.include_router(dashboard.router, prefix="/api/v1", tags=["dashboard"])  # Dashboard统计路由
 app.include_router(websocket_router)  # WebSocket 路由（路径已在 router 中定义）

@@ -123,7 +123,7 @@ async function fetchTraces() {
     if (filters.run_id) params.run_id = filters.run_id
     if (filters.agent_id) params.agent_id = filters.agent_id
     if (filters.model) params.model = filters.model
-    const res = await api.get('/traces', { params })
+    const res = await api.get('/traces/traces', { params })
     traces.value = res.data.items || []
   } catch (e: any) {
     message.error(e.response?.data?.detail || '获取失败')
@@ -134,7 +134,7 @@ async function fetchTraces() {
 
 async function showDetail(record: any) {
   try {
-    const res = await api.get(`/traces/${record.id}`)
+    const res = await api.get(`/traces/traces/${record.id}`)
     detail.value = res.data
     detailVisible.value = true
   } catch (e: any) {
