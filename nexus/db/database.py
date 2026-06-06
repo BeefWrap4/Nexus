@@ -14,12 +14,17 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from nexus.config import settings
 
-# 声明式基类
-Base = declarative_base()
+
+# 修复 (S4-4): SQLAlchemy 2.0 风格 DeclarativeBase 子类
+# 之前用 legacy `declarative_base()` 函数式 API，是 SQLAlchemy 1.x 风格；
+# 2.0 推荐显式继承 DeclarativeBase，便于类型注解和声明式配置。
+class Base(DeclarativeBase):
+    """所有 ORM 模型的声明式基类."""
+
 
 # 异步引擎
 engine = create_async_engine(

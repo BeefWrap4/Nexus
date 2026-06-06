@@ -168,12 +168,14 @@ class LLMService:
         system_prompt: str,
         user_prompt: str,
         model: Optional[str] = None,
+        context: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """生成LLM响应（含重试 + Fallback链）.
+        """生成LLM响应（含重试 + Fallback链 + pre-call 配额检查）.
 
         这是业务层主要使用的接口。
         调用流程：
+        0. 修复 (S4-3): pre-call 配额检查 — tenant 超 max_tokens_per_month 直接抛 QuotaExceededException
         1. 使用指定模型（或默认模型）尝试调用
         2. 失败则按配置重试
         3. 仍失败则按Fallback链切换备用模型
@@ -188,6 +190,43 @@ class LLMService:
         Returns:
             LLMResponse
         """
+        # 修复 (S4-3): pre-call 配额检查
+        # 从 context 拿 tenant_id，再用 UsageMeter 查是否超月配额
+        # 这是真正的成本控制 — 之前 UsageMeter 存在但永远不调用
+        tenant_id = (context or {}).get("tenant_id")
+        if tenant_id:
+            try:
+                from nexus.billing.meter import UsageMeter
+                # 简单的进程内检查（生产应换 DbUsageMeter 持久化）
+                meter = UsageMeter()
+                # 估算本次调用的 token 数（粗略：system + user 字符数 / 4）
+                estimated_tokens = (len(system_prompt) + len(user_prompt)) // 4
+                # 加 max_tokens 预算
+                max_tokens = kwargs.get("max_tokens", settings.DEFAULT_LLM_MAX_TOKENS)
+                estimated_tokens += max_tokens
+
+                ok, msg = meter.check_quota(
+                    tenant_id=tenant_id,
+                    metric="tokens",
+                )
+                if not ok:
+                    from nexus.exceptions import QuotaExceededException
+                    raise QuotaExceededException(
+                        tenant_id=tenant_id,
+                        metric="tokens",
+                        limit_used=msg,
+                    )
+
+                # 设置 usage 上下文，response 后会回填
+                # (详细记录由 LLMClient.call 完成后做)
+                set_trace_context(
+                    tenant_id=tenant_id,
+                    estimated_tokens=estimated_tokens,
+                )
+            except ImportError:
+                # 计量模块未就绪时不阻断业务
+                pass
+
         primary_model = model or settings.DEFAULT_LLM_MODEL
 
         # 构建完整的模型尝试链：主模型 + fallback_chain

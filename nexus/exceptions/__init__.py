@@ -243,6 +243,29 @@ class HITLTimeoutException(HITLException):
         )
 
 
+# 计费 / 配额异常
+class QuotaExceededException(NexusException):
+    """租户超出配额（修复 S4-3：成本控制 pre-call 拦截）."""
+
+    status_code = 402  # Payment Required
+
+    def __init__(self, tenant_id: str, metric: str, limit_used: str):
+        """初始化.
+
+        Args:
+            tenant_id: 触发配额的租户 ID
+            metric: 触发配额的指标名（"tokens" / "llm_calls" / "workflows" / "crew_executions"）
+            limit_used: 人类可读的用量状态（来自 UsageMeter.check_quota）
+        """
+        super().__init__(
+            message=f"Quota exceeded: {tenant_id} / {metric} — {limit_used}",
+            code="QUOTA_EXCEEDED",
+        )
+        self.tenant_id = tenant_id
+        self.metric = metric
+        self.limit_used = limit_used
+
+
 # 安全异常
 class SecurityException(NexusException):
     """安全相关异常."""

@@ -188,8 +188,13 @@ async def trace_llm_call(
         yield tracer
     finally:
         trace_data.latency_ms = int((perf_counter() - start) * 1000)
-        # 异步持久化（不阻塞主流程）
-        asyncio.create_task(_persist_trace(trace_data))
+        # 修复 (S4-6): 用 safe_background_task 替代裸 asyncio.create_task
+        # 之前 trace 持久化失败完全静默（fire-and-forget），现在会写 DLQ + 错误日志
+        from nexus.utils.async_tasks import safe_background_task
+        safe_background_task(
+            _persist_trace(trace_data),
+            task_name=f"llm_tracer_persist_{trace_data.run_id or 'unknown'}",
+        )
         # 同步更新 Prometheus 指标
         _update_prometheus_metrics(trace_data)
 

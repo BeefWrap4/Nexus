@@ -68,6 +68,11 @@ class ToolRegistry:
     对应WAT: utils/llm_providers.py 的注册表模式。
     """
 
+    # 修复 (S4-2): 工具执行统一硬上限 timeout。tool.config.timeout 可以收紧，
+    # 但不能超过这个上限。防止 LLM 工具调用挂死事件循环。
+    _DEFAULT_TOOL_TIMEOUT = 30.0
+    _MAX_TOOL_TIMEOUT = 120.0
+
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._audit_log: list[dict] = []

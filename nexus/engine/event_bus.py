@@ -91,7 +91,13 @@ class EventBus:
         for handler in handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(event))
+                    # 修复 (S4-6): 用 safe_background_task 替代裸 asyncio.create_task
+                    # 原版 handler 异常被吞（fire-and-forget），现在会写 DLQ + 错误日志
+                    from nexus.utils.async_tasks import safe_background_task
+                    safe_background_task(
+                        handler(event),
+                        task_name=f"eventbus_handler_{topic}",
+                    )
                 else:
                     handler(event)
             except Exception:

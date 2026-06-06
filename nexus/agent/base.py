@@ -107,9 +107,18 @@ class BaseAgent:
         decision_parser: Optional[DecisionParser] = None,
         memory: Optional[AgentMemory] = None,
         tool_registry=None,
+        llm_service = None,  # 修复 (S4-1): 注入 LLMService 走 fallback 链
     ):
         self.config = config
         self.llm_client = llm_client or LLMClient()
+        # 修复 (S4-1): 优先用 LLMService (含 retry + fallback chain)，
+        # 不再用 raw LLMClient — 后者没有 fallback，模型挂掉就 hard fail
+        if llm_service is not None:
+            self.llm_service = llm_service
+        else:
+            from nexus.services.llm_service import LLMService
+            # 复用同一 LLMClient 实例
+            self.llm_service = LLMService(client=self.llm_client)
         self.trust_model = trust_model
         self.decision_parser = decision_parser or DecisionParser()
         self.memory = memory
@@ -238,10 +247,12 @@ class BaseAgent:
 
             try:
                 async with self._get_semaphore():
-                    # 多模态首轮：使用预构建的 messages
+                    # 修复 (S4-1): 用 LLMService.generate 走 fallback 链 + retry
+                    # LLMService.generate 的 **kwargs 会转发给底层 LLMClient.call
+                    # 公共 kwargs：model, provider, temperature, max_tokens, tools, messages,
+                    #             enable_semantic_cache, session_id
                     if mm_messages is not None and iteration == 0:
-                        response = await self.llm_client.call(
-                            messages=mm_messages,
+                        response = await self.llm_service.generate(
                             system_prompt=system_prompt,
                             user_prompt=prompt,
                             model=self.config.model,
@@ -249,9 +260,10 @@ class BaseAgent:
                             temperature=self.config.temperature,
                             max_tokens=self.config.max_tokens,
                             tools=openai_tools if openai_tools else None,
+                            messages=mm_messages,
                         )
                     else:
-                        response = await self.llm_client.call(
+                        response = await self.llm_service.generate(
                             system_prompt=system_prompt,
                             user_prompt=prompt,
                             model=self.config.model,
