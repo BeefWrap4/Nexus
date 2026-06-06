@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_tenant_db
-from nexus.models import APIKey
+from nexus.models import APIKey, SystemSetting
 from nexus.security.auth import AuthService, get_current_user
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# ─────────────────── Settings 默认值 ───────────────────
+
+# 修复 (P1): 之前 /settings GET 返回硬编码默认值; 现在合并 DB 存的覆盖
+# (system_settings 表, tenant_id 维度) — DB 没存 → 用这里默认。
+# 这样前端"保存设置"真的能改值, 不再是 stub。
+_DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
+    "general": {
+        "app_name": "NEXUS",
+        "app_version": "0.1.0",
+        "default_language": "zh-CN",
+        "theme": "light",
+    },
+    "llm": {
+        "default_model": "deepseek-chat",
+        "default_temperature": 0.2,
+        "default_max_tokens": 2000,
+    },
+    "security": {
+        "rate_limit_per_minute": 1000,
+        "require_mfa": False,
+        "session_timeout_minutes": 60,
+    },
+}
+
+
 # ─────────────────── Settings ───────────────────
+
+async def _load_category(db: AsyncSession, tenant_id: str, category: str) -> dict:
+    """从 DB 拉某 category 的所有 setting, 合并默认值. 没存 → 用默认."""
+    result = await db.execute(
+        select(SystemSetting)
+        .where(SystemSetting.tenant_id == tenant_id)
+        .where(SystemSetting.category == category)
+    )
+    stored = {row.key: row.value for row in result.scalars().all()}
+    # 默认值被 DB 覆盖
+    merged = {**_DEFAULT_SETTINGS[category], **stored}
+    return merged
+
 
 @router.get("")
 async def get_all_settings(
@@ -37,27 +75,55 @@ async def get_all_settings(
 ) -> dict[str, Any]:
     """拉所有设置 (3 类: general / llm / security).
 
-    修复 (前端): Settings.vue 默认 GET /settings, 之前 404, 现在返回
-    默认值结构, 前端能渲染表单。
+    修复 (P1): 之前是硬编码默认; 现在 merge DB 里 tenant 的覆盖。
     """
+    tenant_id = current_user.get("tenant_id")
+    if not tenant_id:
+        return _DEFAULT_SETTINGS
     return {
-        "general": {
-            "app_name": "NEXUS",
-            "app_version": "0.1.0",
-            "default_language": "zh-CN",
-            "theme": "light",
-        },
-        "llm": {
-            "default_model": "deepseek-chat",
-            "default_temperature": 0.2,
-            "default_max_tokens": 2000,
-        },
-        "security": {
-            "rate_limit_per_minute": 1000,
-            "require_mfa": False,
-            "session_timeout_minutes": 60,
-        },
+        cat: await _load_category(db, tenant_id, cat)
+        for cat in _DEFAULT_SETTINGS
     }
+
+
+async def _save_category(
+    db: AsyncSession,
+    tenant_id: str,
+    user_id: str | None,
+    category: str,
+    values: dict[str, Any],
+) -> int:
+    """UPSERT 一组 settings. values 里每个 key 写一行. 返回写入行数."""
+    if not values:
+        return 0
+    for k, v in values.items():
+        # 检查是否已存在
+        existing = await db.execute(
+            select(SystemSetting)
+            .where(SystemSetting.tenant_id == tenant_id)
+            .where(SystemSetting.key == k)
+        )
+        row = existing.scalar_one_or_none()
+        if row is None:
+            # 防止 key 长度溢出
+            k_clean = str(k)[:255]
+            db.add(SystemSetting(
+                tenant_id=tenant_id,
+                key=k_clean,
+                value=v,
+                category=category,
+                updated_by=user_id,
+            ))
+        else:
+            row.value = v
+            row.category = category
+            row.updated_by = user_id
+    await db.commit()
+    logger.info(
+        "settings_saved tenant=%s user=%s category=%s count=%d",
+        tenant_id, user_id, category, len(values),
+    )
+    return len(values)
 
 
 @router.post("/general")
@@ -66,9 +132,13 @@ async def save_general_settings(
     db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """保存通用设置 — 当前 stub, 仅记日志."""
-    logger.info("save_general_settings user=%s values=%s", current_user.get("id"), values)
-    return {"ok": True, "saved": values}
+    """保存通用设置 — 真存 system_settings 表 (category='general')."""
+    tenant_id = current_user.get("tenant_id")
+    user_id = current_user.get("id")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="用户无 tenant_id")
+    count = await _save_category(db, tenant_id, user_id, "general", values)
+    return {"ok": True, "saved": count, "category": "general"}
 
 
 @router.post("/llm")
@@ -77,9 +147,13 @@ async def save_llm_settings(
     db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """保存 LLM 默认设置 — stub."""
-    logger.info("save_llm_settings user=%s values=%s", current_user.get("id"), values)
-    return {"ok": True, "saved": values}
+    """保存 LLM 默认设置 — 真存 (category='llm')."""
+    tenant_id = current_user.get("tenant_id")
+    user_id = current_user.get("id")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="用户无 tenant_id")
+    count = await _save_category(db, tenant_id, user_id, "llm", values)
+    return {"ok": True, "saved": count, "category": "llm"}
 
 
 @router.post("/security")
@@ -88,9 +162,13 @@ async def save_security_settings(
     db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """保存安全设置 — stub."""
-    logger.info("save_security_settings user=%s values=%s", current_user.get("id"), values)
-    return {"ok": True, "saved": values}
+    """保存安全设置 — 真存 (category='security')."""
+    tenant_id = current_user.get("tenant_id")
+    user_id = current_user.get("id")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="用户无 tenant_id")
+    count = await _save_category(db, tenant_id, user_id, "security", values)
+    return {"ok": True, "saved": count, "category": "security"}
 
 
 # ─────────────────── API Keys (真写库) ───────────────────

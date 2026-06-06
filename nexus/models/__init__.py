@@ -13,6 +13,7 @@ from nexus.models.agent import Agent
 from nexus.models.tool import Tool
 from nexus.models.hitl import HITLTask
 from nexus.models.tenant import Tenant, User, APIKey
+from nexus.models.system_setting import SystemSetting  # 修复 (P1): 租户级 KV 设置
 from nexus.models.audit import AuditLog, Artifact
 from nexus.models.eval import EvalRun
 from nexus.models.experiment import PromptExperiment, PromptExperimentVariant
@@ -34,6 +35,7 @@ __all__ = [
     "Tenant",
     "User",
     "APIKey",
+    "SystemSetting",
     "AuditLog",
     "Artifact",
     "LLMCallTrace",
