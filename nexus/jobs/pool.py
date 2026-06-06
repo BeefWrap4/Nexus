@@ -28,7 +28,23 @@ async def init_arq_pool() -> None:
     """初始化全局 ARQ Redis 连接池."""
     global _arq_pool
     if _arq_pool is None:
-        _arq_pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+        # 支持哨兵模式
+        if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+            redis_settings = RedisSettings(
+                host='redis-master',
+                port=6379,
+                password=settings.REDIS_PASSWORD,
+            )
+        else:
+            from urllib.parse import urlparse
+            parsed = urlparse(settings.REDIS_URL or 'redis://localhost:6379/0')
+            redis_settings = RedisSettings(
+                host=parsed.hostname or 'localhost',
+                port=parsed.port or 6379,
+                password=parsed.password,
+            )
+        
+        _arq_pool = await create_pool(redis_settings)
 
 
 async def close_arq_pool() -> None:

@@ -34,6 +34,23 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # JWT专用配置（密钥分离与轮换机制）
+    JWT_SECRET_KEY: str = Field(
+        default="nexus-jwt-dev-secret-not-for-production",
+        validation_alias="JWT_SECRET_KEY",
+    )
+    JWT_ALGORITHM: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=60, validation_alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
+    )  # 1小时
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = Field(
+        default=7, validation_alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS"
+    )
+    # 历史密钥列表（用于验证旧Token，逗号分隔）
+    JWT_PREVIOUS_SECRET_KEYS: list[str] = Field(
+        default_factory=list, validation_alias="JWT_PREVIOUS_SECRET_KEYS"
+    )
+
     # 开发环境 API Key 回退（仅非 production 环境生效）
     # 设置此值后，X-API-Key header 匹配时直接通过认证，不查数据库
     # 生产环境必须留空，否则启动安全校验会报错
@@ -46,6 +63,32 @@ class Settings(BaseSettings):
         default="sqlite+aiosqlite:///./nexus.db",
         validation_alias="DATABASE_URL",
     )
+    
+    # 数据库连接配置(支持主从)
+    DATABASE_URL_PRIMARY: str = Field(
+        default="",
+        description="Primary database URL for write operations",
+    )
+    
+    DATABASE_URL_REPLICA: str = Field(
+        default="",
+        description="Replica database URL for read operations",
+    )
+    
+    @property
+    def primary_db_url(self) -> str:
+        """获取主库URL,如果未配置则使用DATABASE_URL."""
+        if self.DATABASE_URL_PRIMARY:
+            return self.DATABASE_URL_PRIMARY
+        return self.DATABASE_URL
+    
+    @property
+    def replica_db_url(self) -> str:
+        """获取从库URL,如果未配置则使用主库URL(降级为单节点)."""
+        if self.DATABASE_URL_REPLICA:
+            return self.DATABASE_URL_REPLICA
+        return self.primary_db_url
+    
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     DATABASE_ECHO: bool = Field(default=False, validation_alias="DATABASE_ECHO")
@@ -55,6 +98,27 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
+    
+    # Redis哨兵配置
+    REDIS_SENTINEL_HOSTS: Optional[str] = Field(
+        default=None,
+        description="Comma-separated list of sentinel hosts (host:port)",
+    )
+    
+    REDIS_SENTINEL_MASTER: str = Field(
+        default="mymaster",
+        description="Sentinel master group name",
+    )
+    
+    REDIS_PASSWORD: Optional[str] = Field(
+        default=None,
+        description="Redis authentication password",
+    )
+    
+    @property
+    def use_redis_sentinel(self) -> bool:
+        """判断是否使用Redis哨兵模式."""
+        return bool(self.REDIS_SENTINEL_HOSTS)
 
     # ARQ Worker 配置
     ARQ_WORKER_CONCURRENCY: int = Field(default=10, validation_alias="ARQ_WORKER_CONCURRENCY")
@@ -197,6 +261,19 @@ class Settings(BaseSettings):
         validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT",
     )
     LOG_LEVEL: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
+    def validate_jwt_secret_key(self) -> None:
+        """验证JWT密钥强度（生产环境必须使用强密钥）."""
+        if self.ENVIRONMENT == "production":
+            if not self.JWT_SECRET_KEY or len(self.JWT_SECRET_KEY) < 32:
+                raise ValueError(
+                    "生产环境必须设置强JWT_SECRET_KEY（至少32字符）"
+                )
+            # 检查是否使用了默认值
+            if self.JWT_SECRET_KEY == "nexus-jwt-dev-secret-not-for-production":
+                raise ValueError(
+                    "生产环境不能使用默认的JWT_SECRET_KEY，请设置强随机字符串"
+                )
 
 
 # 全局配置实例
