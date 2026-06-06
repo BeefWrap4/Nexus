@@ -22,9 +22,9 @@ SILICONFLOW_API_KEY=<REDACTED-SILICONFLOW-KEY>  ← 泄露
 **步骤：**
 
 ```bash
-# 1. 立刻在供应商控制台删除
-# DeepSeek:   https://platform.deepseek.com → API Keys → 删除 sk-3f22... → 生成新 key
-# SiliconFlow: https://siliconflow.cn → API Keys → 删除 sk-ylic... → 生成新 key
+# 1. 立刻在供应商控制台删除旧 key（id 完整字符串不在这记录）
+# DeepSeek:   https://platform.deepseek.com → API Keys → 删除旧 key → 生成新 key
+# SiliconFlow: https://siliconflow.cn → API Keys → 删除旧 key → 生成新 key
 
 # 2. 更新 .env（绝对不要 commit .env）
 # 编辑 D:/AI_learning/nexus/.env 替换这两行
@@ -44,8 +44,8 @@ git filter-repo --invert-paths --path .env
 
 **验证：**
 ```bash
-# 旧 key 必须已撤销
-curl -X POST https://api.deepseek.com/v1/chat/completions -H "Authorization: Bearer sk-3f22..."  # 应 401
+# 旧 key 必须已撤销（用你自己的旧 key 字符串替换 <OLD_KEY>，不要在此处写真实 key）
+curl -X POST https://api.deepseek.com/v1/chat/completions -H "Authorization: Bearer <OLD_KEY>"  # 应 401
 # 新 key 工作正常
 curl -X POST https://api.deepseek.com/v1/chat/completions -H "Authorization: Bearer $NEW_KEY"  # 200
 ```
