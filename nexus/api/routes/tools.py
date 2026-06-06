@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.security.auth import get_current_user
 from nexus.services.tool import ToolService
 
@@ -55,7 +55,7 @@ def _to_response(tool) -> dict:
 @router.get("/")
 async def list_tools(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出工具（合并 DB 工具和内存 RAG Tools）."""
@@ -91,7 +91,7 @@ async def list_tools(
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_tool(
     data: ToolCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """注册工具."""
@@ -115,7 +115,7 @@ async def create_tool(
 @router.get("/{tool_id}")
 async def get_tool(
     tool_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取工具."""
@@ -130,7 +130,7 @@ async def get_tool(
 async def update_tool(
     tool_id: UUID,
     data: ToolCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """更新工具."""
@@ -150,7 +150,7 @@ async def update_tool(
 @router.delete("/{tool_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tool(
     tool_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """删除工具."""
@@ -166,7 +166,7 @@ async def delete_tool(
 async def test_tool(
     tool_id: UUID,
     params: dict,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """测试工具."""

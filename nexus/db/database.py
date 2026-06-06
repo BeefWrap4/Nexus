@@ -119,6 +119,39 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+# 修复 (S1-3 路由接入): 真正的"tenant-scoped DB" FastAPI 依赖
+# 用法: db: AsyncSession = Depends(get_tenant_db) — 自动从 request.state.user
+# 读 tenant_id 并注入 GUC。后续 SQL 自动受 RLS 过滤。
+from fastapi import Depends, Request
+
+
+async def get_tenant_db(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AsyncSession:
+    """FastAPI依赖：DB session 自动绑定 current_user.tenant_id (用于 RLS).
+
+    修复 (S1-3 路由接入): 这是 S1-3 真正生效的关键。
+    之前 get_db() 返不带 tenant 的 session，RLS 永不触发。
+    现在 set_session_tenant_id 调一下，下次事务 begin 时 GUC 注入 PG。
+
+    关键: 必须在事务 begin 前调用 set_session_tenant_id ——
+    我们在 dependency 末尾、yield 前调，FastAPI 会等 endpoint 返回后 commit。
+    第一次 ORM query 时触发 begin，事件钩子读 session.info["tenant_id"] 并 SET。
+
+    用法:
+        @router.get("/workflows")
+        async def list_workflows(db = Depends(get_tenant_db)):
+            # SELECT * FROM workflows 自动只返当前 tenant 的行
+            ...
+    """
+    user = getattr(request.state, "user", None) or {}
+    tenant_id = user.get("tenant_id")
+    if tenant_id:
+        set_session_tenant_id(db, str(tenant_id))
+    return db
+
+
 async def get_db_with_tenant(
     tenant_id: Optional[str] = None,
 ) -> AsyncGenerator[AsyncSession, None]:

@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db, get_db_session
+from nexus.db.database import get_db, get_tenant_db
 from nexus.engine.enums import EvalRunStatus
 from nexus.eval.runner import EvalRunner
 from nexus.security.auth import get_current_user
@@ -54,7 +54,7 @@ class EvalRunOut(BaseModel):
 @router.post("/evals", response_model=EvalRunOut)
 async def create_eval_run(
     data: EvalRunCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """创建评估运行."""
@@ -70,7 +70,7 @@ async def create_eval_run(
 
 @router.get("/evals", response_model=list[EvalRunOut])
 async def list_eval_runs(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """列出评估运行."""
@@ -81,7 +81,7 @@ async def list_eval_runs(
 @router.get("/evals/{eval_id}", response_model=EvalRunOut)
 async def get_eval_run(
     eval_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """获取评估运行详情（含结果）."""
@@ -96,7 +96,7 @@ async def get_eval_run(
 async def execute_eval(
     eval_id: UUID,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """触发评估执行（后台异步执行）."""
@@ -128,7 +128,7 @@ async def execute_eval(
 @router.delete("/evals/{eval_id}")
 async def delete_eval_run(
     eval_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """删除评估运行."""

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.security.auth import get_current_user
 from nexus.services.code_review import CodeReviewService
 
@@ -55,7 +55,7 @@ class ReviewResponse(BaseModel):
 @router.post("/reviews", response_model=ReviewResponse)
 async def submit_review(
     data: ReviewSubmitRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """Submit code review — create persistent run and enqueue for execution."""
@@ -75,7 +75,7 @@ async def submit_review(
 @router.get("/reviews/{run_id}")
 async def get_review_result(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """Get review result by querying run status via CodeReviewService."""

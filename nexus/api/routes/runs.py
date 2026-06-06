@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.engine.enums import DLQJobStatus, RunStatus
 from nexus.security.auth import get_current_user
 from nexus.services.run import RunService
@@ -42,7 +42,7 @@ def _to_response(run) -> RunResponse:
 async def list_runs(
     limit: int = 10,
     skip: int = 0,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取最近执行记录列表."""
@@ -85,7 +85,7 @@ async def list_runs(
 @router.get("/{run_id}")
 async def get_run(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取执行状态."""
@@ -99,7 +99,7 @@ async def get_run(
 @router.post("/{run_id}/cancel")
 async def cancel_run(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """取消执行."""
@@ -114,7 +114,7 @@ async def cancel_run(
 @router.post("/{run_id}/pause")
 async def pause_run(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """暂停执行."""
@@ -130,7 +130,7 @@ async def pause_run(
 async def resume_run(
     request: Request,
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """恢复执行 — 真正把 resume_workflow_job 排进 ARQ 队列.
@@ -190,7 +190,7 @@ async def resume_run(
 @router.post("/{run_id}/retry")
 async def retry_run(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """重试失败节点."""
@@ -205,7 +205,7 @@ async def retry_run(
 @router.get("/{run_id}/logs")
 async def get_run_logs(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取执行日志."""
@@ -230,7 +230,7 @@ async def get_run_logs(
 @router.get("/{run_id}/artifacts")
 async def get_run_artifacts(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取输出产物."""
@@ -247,7 +247,7 @@ async def list_dlq_jobs(
     status: str = DLQJobStatus.FAILED.value,
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出死信队列中的失败任务."""
@@ -284,7 +284,7 @@ async def list_dlq_jobs(
 @router.post("/dlq/{job_id}/retry")
 async def retry_dlq_job(
     job_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """手动重试死信队列中的任务."""

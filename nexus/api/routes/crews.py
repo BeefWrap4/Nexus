@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.models.crew import CrewRun
 from nexus.security.auth import get_current_user
 from nexus.services.crew import CrewService, CrewRunService
@@ -121,7 +121,7 @@ def _to_run_response(run: CrewRun) -> CrewRunResponse:
 async def list_crews(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出 Crew 团队."""
@@ -139,7 +139,7 @@ async def list_crews(
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_crew(
     data: CrewCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """创建 Crew 团队."""
@@ -171,7 +171,7 @@ async def create_crew(
 @router.get("/{crew_id}")
 async def get_crew(
     crew_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取 Crew 详情."""
@@ -186,7 +186,7 @@ async def get_crew(
 async def update_crew(
     crew_id: UUID,
     data: CrewUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """更新 Crew."""
@@ -214,7 +214,7 @@ async def update_crew(
 @router.delete("/{crew_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_crew(
     crew_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """删除 Crew."""
@@ -233,7 +233,7 @@ async def delete_crew(
 async def run_crew(
     crew_id: UUID,
     req: CrewRunRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """触发 Crew 执行."""
@@ -271,7 +271,7 @@ async def list_crew_runs(
     crew_id: UUID,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取 Crew 执行历史."""
@@ -283,7 +283,7 @@ async def list_crew_runs(
 @router.get("/runs/{run_id}")
 async def get_crew_run(
     run_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取 Crew 执行详情."""

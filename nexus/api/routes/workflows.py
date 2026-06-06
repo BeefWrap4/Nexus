@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.exceptions import WorkflowNotFoundException
 from nexus.security.auth import get_current_user
 from nexus.services.run import RunService
@@ -77,7 +77,7 @@ async def list_workflows(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     status: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出工作流."""
@@ -90,7 +90,7 @@ async def list_workflows(
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 async def create_workflow(
     data: WorkflowCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """创建工作流."""
@@ -116,7 +116,7 @@ async def create_workflow(
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
 async def get_workflow(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取工作流详情."""
@@ -131,7 +131,7 @@ async def get_workflow(
 async def update_workflow(
     workflow_id: UUID,
     data: WorkflowUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """更新工作流."""
@@ -151,7 +151,7 @@ async def update_workflow(
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workflow(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """删除工作流."""
@@ -167,7 +167,7 @@ async def delete_workflow(
 async def trigger_workflow_run(
     workflow_id: UUID,
     data: WorkflowRunRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """触发工作流执行."""
@@ -194,7 +194,7 @@ async def list_workflow_runs(
     workflow_id: UUID,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出工作流执行记录."""
@@ -216,7 +216,7 @@ async def list_workflow_runs(
 @router.post("/{workflow_id}/versions")
 async def create_version(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """创建工作流新版本."""
@@ -242,7 +242,7 @@ async def create_version(
 @router.get("/{workflow_id}/versions")
 async def list_versions(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出版本历史."""
@@ -261,7 +261,7 @@ async def list_versions(
 @router.post("/{workflow_id}/clone")
 async def clone_workflow(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """克隆工作流."""
@@ -301,7 +301,7 @@ class ScheduleRequest(BaseModel):
 async def schedule_workflow(
     workflow_id: UUID,
     data: ScheduleRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """设置工作流定时任务.
@@ -342,7 +342,7 @@ async def schedule_workflow(
 @router.delete("/{workflow_id}/schedule")
 async def unschedule_workflow(
     workflow_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """取消工作流定时任务."""

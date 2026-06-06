@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.security.auth import get_current_user
 from nexus.services.prompt import (
     ExperimentService,
@@ -103,7 +103,7 @@ class ExperimentOut(BaseModel):
 @router.post("/prompts", response_model=PromptTemplateOut)
 async def create_prompt(
     data: PromptTemplateCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """创建 PromptTemplate（自动生成 v1）."""
@@ -125,7 +125,7 @@ async def create_prompt(
 
 @router.get("/prompts", response_model=list[PromptTemplateOut])
 async def list_prompts(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """列出 PromptTemplates."""
@@ -136,7 +136,7 @@ async def list_prompts(
 @router.get("/prompts/{prompt_id}", response_model=PromptTemplateOut)
 async def get_prompt(
     prompt_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """获取 PromptTemplate（含当前版本内容）."""
@@ -151,7 +151,7 @@ async def get_prompt(
 async def get_prompt_content(
     prompt_id: UUID,
     version: int | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """获取 Prompt 内容（默认当前版本，可指定历史版本）."""
@@ -177,7 +177,7 @@ async def get_prompt_content(
 async def update_prompt(
     prompt_id: UUID,
     data: PromptTemplateUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """更新 Prompt — 自动创建新版本."""
@@ -201,7 +201,7 @@ async def update_prompt(
 @router.delete("/prompts/{prompt_id}")
 async def delete_prompt(
     prompt_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """删除 PromptTemplate（级联删除所有版本）."""
@@ -218,7 +218,7 @@ async def delete_prompt(
 @router.get("/prompts/{prompt_id}/versions", response_model=list[PromptTemplateVersionOut])
 async def list_versions(
     prompt_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """列出所有版本历史."""
@@ -231,7 +231,7 @@ async def diff_versions(
     prompt_id: UUID,
     version_a: int,
     version_b: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """对比两个版本的差异（统一 diff 格式）."""
@@ -266,7 +266,7 @@ async def diff_versions(
 async def create_experiment(
     prompt_id: UUID,
     data: ExperimentCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """创建 Prompt A/B 实验."""
@@ -297,7 +297,7 @@ async def create_experiment(
 @router.get("/prompts/{prompt_id}/experiments", response_model=list[ExperimentOut])
 async def list_experiments(
     prompt_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """列出 PromptTemplate 的所有实验."""
@@ -308,7 +308,7 @@ async def list_experiments(
 @router.post("/experiments/{exp_id}/pause")
 async def pause_experiment(
     exp_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """暂停实验."""
@@ -322,7 +322,7 @@ async def pause_experiment(
 @router.post("/experiments/{exp_id}/resume")
 async def resume_experiment(
     exp_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """恢复实验."""
@@ -336,7 +336,7 @@ async def resume_experiment(
 @router.get("/experiments/{exp_id}/results")
 async def get_experiment_results(
     exp_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: Any = Depends(get_current_user),
 ):
     """获取实验结果汇总."""

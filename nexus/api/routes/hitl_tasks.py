@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from nexus.db.database import get_db
+from nexus.db.database import get_db, get_tenant_db
 from nexus.engine.enums import HITLStatus
 from nexus.engine.event_bus import EventBus
 from nexus.security.auth import get_current_user
@@ -52,7 +52,7 @@ def _to_response(task) -> HITLTaskResponse:
 @router.get("/tasks")
 async def list_hitl_tasks(
     status: str = "pending",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """列出审批任务."""
@@ -65,7 +65,7 @@ async def list_hitl_tasks(
 @router.get("/tasks/{task_id}")
 async def get_hitl_task(
     task_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取任务详情."""
@@ -81,7 +81,7 @@ async def respond_to_hitl_task(
     task_id: UUID,
     data: HITLResponseRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """提交审批响应.
@@ -143,7 +143,7 @@ async def respond_to_hitl_task(
 
 @router.get("/tasks/pending/count")
 async def get_pending_count(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_tenant_db),
     current_user: dict = Depends(get_current_user),
 ):
     """获取待审批数量."""
