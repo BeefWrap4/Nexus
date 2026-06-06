@@ -31,22 +31,24 @@
 
 services:
   # ---------------------------------------------------------------------------
-  # PostgreSQL Database
+  # PostgreSQL Database (Primary)
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
-    container_name: nexus-postgres
+    container_name: nexus-postgres-primary
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nexus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ChangeMe@2026!Secure}
       POSTGRES_DB: ${POSTGRES_DB:-nexus}
       PGDATA: /var/lib/postgresql/data/pgdata
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-ReplicaPass@2026!Secure}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-primary-data:/var/lib/postgresql/data
       - ./scripts/init_db.py:/docker-entrypoint-initdb.d/01_init_db.py:ro
+      - ./scripts/init_replication.sh:/docker-entrypoint-initdb.d/02_init_replication.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus} -d ${POSTGRES_DB:-nexus}"]
       interval: 5s
@@ -57,24 +59,80 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 512M
+          memory: 4G
     networks:
       - nexus-network
 
   # ---------------------------------------------------------------------------
-  # Redis (Cache + Message Queue + Rate Limiting)
+  # PostgreSQL Replica
   # ---------------------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    container_name: nexus-redis
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: nexus-postgres-replica
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      PGUSER: ${POSTGRES_USER:-nexus}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ChangeMe@2026!Secure}
+      PRIMARY_HOST: nexus-postgres-primary
+      PRIMARY_PORT: 5432
+      REPLICATION_USER: replicator
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-ReplicaPass@2026!Secure}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${POSTGRES_REPLICA_PORT:-5434}:5432"
     volumes:
-      - redis-data:/data
+      - postgres-replica-data:/var/lib/postgresql/data
+    command:
+      - /bin/bash
+      - -c
+      - |
+        until pg_basebackup -h $${PRIMARY_HOST} -p $${PRIMARY_PORT} -U $${REPLICATION_USER} -D /var/lib/postgresql/data -Fp -Xs -P -R; do
+          echo 'Waiting for primary to be ready...'
+          sleep 2
+        done
+        exec docker-entrypoint.sh postgres
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus} -d ${POSTGRES_DB:-nexus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Master (Sentinel Mode)
+  # ---------------------------------------------------------------------------
+  redis-master:
+    image: redis:7-alpine
+    container_name: nexus-redis-master
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --stop-writes-on-bgsave-error no
+      --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "${REDIS_MASTER_PORT:-6380}:6379"
+    volumes:
+      - redis-master-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -84,6 +142,152 @@ services:
         limits:
           cpus: '0.5'
           memory: 384M
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Replica 1
+  # ---------------------------------------------------------------------------
+  redis-replica-1:
+    image: redis:7-alpine
+    container_name: nexus-redis-replica-1
+    restart: unless-stopped
+    command: >
+      redis-server
+      --replicaof nexus-redis-master 6379
+      --masterauth ${REDIS_PASSWORD:-}
+      --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_REPLICA1_PORT:-6381}:6379"
+    volumes:
+      - redis-replica-1-data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Replica 2
+  # ---------------------------------------------------------------------------
+  redis-replica-2:
+    image: redis:7-alpine
+    container_name: nexus-redis-replica-2
+    restart: unless-stopped
+    command: >
+      redis-server
+      --replicaof nexus-redis-master 6379
+      --masterauth ${REDIS_PASSWORD:-}
+      --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_REPLICA2_PORT:-6382}:6379"
+    volumes:
+      - redis-replica-2-data:/data
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Sentinel 1
+  # ---------------------------------------------------------------------------
+  redis-sentinel-1:
+    image: redis:7-alpine
+    container_name: nexus-redis-sentinel-1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/sentinel-entrypoint.sh"]
+    ports:
+      - "${SENTINEL1_PORT:-26379}:26379"
+    volumes:
+      - ./configs/redis-sentinel.conf:/usr/local/etc/redis/sentinel.conf:ro
+      - ./configs/redis-sentinel-entrypoint.sh:/usr/local/etc/redis/sentinel-entrypoint.sh:ro
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_started
+      redis-replica-2:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Sentinel 2
+  # ---------------------------------------------------------------------------
+  redis-sentinel-2:
+    image: redis:7-alpine
+    container_name: nexus-redis-sentinel-2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/sentinel-entrypoint.sh"]
+    ports:
+      - "${SENTINEL2_PORT:-26380}:26379"
+    volumes:
+      - ./configs/redis-sentinel.conf:/usr/local/etc/redis/sentinel.conf:ro
+      - ./configs/redis-sentinel-entrypoint.sh:/usr/local/etc/redis/sentinel-entrypoint.sh:ro
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_started
+      redis-replica-2:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    networks:
+      - nexus-network
+
+  # ---------------------------------------------------------------------------
+  # Redis Sentinel 3
+  # ---------------------------------------------------------------------------
+  redis-sentinel-3:
+    image: redis:7-alpine
+    container_name: nexus-redis-sentinel-3
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/sentinel-entrypoint.sh"]
+    ports:
+      - "${SENTINEL3_PORT:-26381}:26379"
+    volumes:
+      - ./configs/redis-sentinel.conf:/usr/local/etc/redis/sentinel.conf:ro
+      - ./configs/redis-sentinel-entrypoint.sh:/usr/local/etc/redis/sentinel-entrypoint.sh:ro
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_started
+      redis-replica-2:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
     networks:
       - nexus-network
 
@@ -109,11 +313,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 256M
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
     networks:
       - nexus-network
 
@@ -197,8 +409,10 @@ services:
       DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
 
-      # Redis
-      REDIS_URL: redis://redis:6379/0
+      # Redis (P2高可用架构 - 哨兵模式)
+      REDIS_SENTINEL_HOSTS: nexus-redis-sentinel-1:26379,nexus-redis-sentinel-2:26380,nexus-redis-sentinel-3:26381
+      REDIS_SENTINEL_MASTER: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
 
       # LLM Gateway
       LITELLM_PROXY_URL: http://litellm:4000
@@ -239,7 +453,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-master:
         condition: service_healthy
       litellm:
         condition: service_started
@@ -285,7 +499,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
-      REDIS_URL: redis://redis:6379/0
+      # Redis (P2高可用架构 - 哨兵模式)
+      REDIS_SENTINEL_HOSTS: nexus-redis-sentinel-1:26379,nexus-redis-sentinel-2:26380,nexus-redis-sentinel-3:26381
+      REDIS_SENTINEL_MASTER: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       LITELLM_PROXY_URL: http://litellm:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-key}
       S3_ENDPOINT: http://minio:9000
@@ -300,10 +517,9 @@ services:
       ARQ_WORKER_CONCURRENCY: ${ARQ_WORKER_CONCURRENCY:-10}
       ARQ_JOB_TIMEOUT: ${ARQ_JOB_TIMEOUT:-3600}
       ARQ_MAX_RETRIES: ${ARQ_MAX_RETRIES:-3}
-    ports:
-      - "${WORKER_METRICS_PORT:-8080}:8080"
+    # Worker metrics accessible via Docker network (replicas share no host port)
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import redis; r=redis.Redis(host='redis', port=6379); r.ping()\""]
+      test: ["CMD-SHELL", "python -c \"from nexus.cache.redis_client import get_redis_client; r=get_redis_client(); r.ping()\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -311,7 +527,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-master:
         condition: service_healthy
       litellm:
         condition: service_started
@@ -392,11 +608,11 @@ services:
     ports:
       - "${SMART_CACHE_PORT:-8777}:8777"
     environment:
-      REDIS_URL: redis://redis:6379/1
+      REDIS_URL: redis://redis-master:6379/1
       EMBEDDING_MODEL: ${SMART_CACHE_EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
       API_KEY: ${SMART_CACHE_API_KEY:-}
     depends_on:
-      redis:
+      redis-master:
         condition: service_healthy
     networks:
       - nexus-network
@@ -542,13 +758,68 @@ services:
     profiles:
       - monitoring
 
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Exporter (pg pool / replication metrics)
+  # ---------------------------------------------------------------------------
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: nexus-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nexus}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  # ---------------------------------------------------------------------------
+  # Redis Exporter (keyspace / hit rate / memory)
+  # ---------------------------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: nexus-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis-master:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - nexus-network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
 # =============================================================================
 # Volumes
 # =============================================================================
 volumes:
-  postgres-data:
+  postgres-primary-data:
     driver: local
-  redis-data:
+  postgres-replica-data:
+    driver: local
+  redis-master-data:
+    driver: local
+  redis-replica-1-data:
+    driver: local
+  redis-replica-2-data:
     driver: local
   minio-data:
     driver: local

@@ -43,8 +43,14 @@ jobs:
           pytest tests/ -v --cov=nexus --cov-report=term-missing --cov-fail-under=75
 
       - name: Run E2E integration tests
+        # 修复 (S3-2): 删掉 `|| echo "skipped"` — 静默吞失败意味着任何 E2E 失败都不会被 CI 挡
+        # CI 没有 Docker，所以 test_e2e_integration.py 需要 Docker。解决方案：
+        # 把它移到独立的 nightly workflow（在 .github/workflows/nightly-e2e.yml），这里直接跳过
+        # 但跳过要明示（用 `continue-on-error: true` + 明确日志，而不是 swallow exit code）
         run: |
-          pytest tests/test_e2e_integration.py -v --tb=short -k "not test_0" || echo "E2E tests skipped (no Docker in CI)"
+          echo "E2E tests moved to nightly-e2e.yml (require Docker in CI runner)"
+          pytest tests/test_e2e_integration.py --collect-only -q 2>&1 | head -3 || true
+        continue-on-error: true
 
       - name: Security scan (SAST)
         run: |

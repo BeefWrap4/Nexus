@@ -25,11 +25,25 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
 
-  - job_name: 'nexus-worker'
+  - job_name: 'nexus-worker-1'
     static_configs:
-      - targets: ['worker:8080']
+      - targets: ['nexus-worker-1:9090']
     metrics_path: /metrics
     scrape_interval: 15s
+
+  - job_name: 'nexus-worker-2'
+    static_configs:
+      - targets: ['nexus-worker-2:9090']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: 'nexus-ui'
+    static_configs:
+      - targets: ['ui:80']
+    # 注：nexus-ui 是 nginx，无 /metrics。如要监控需加 nginx-exporter 或 nginx-prometheus-exporter。
+    # 当前只 scrape 探活，未来应部署 nginx-prometheus-exporter 并指向 /stub_status。
+    metrics_path: /stub_status
+    scrape_interval: 30s
 
   - job_name: 'prometheus'
     static_configs:
@@ -39,3 +53,43 @@ scrape_configs:
   - job_name: 'alertmanager'
     static_configs:
       - targets: ['alertmanager:9093']
+
+  # Node 主机层指标（CPU/内存/磁盘/网络）— DatabaseConnectionPoolExhausted 和
+  # HighDiskUsage 告警依赖这些 metric。
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # PostgreSQL 指标
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
+  # Redis 指标
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+
+  # MinIO 指标
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: /minio/v2/metrics/cluster
+    scrape_interval: 30s
+
+  # LiteLLM 指标
+  - job_name: 'litellm'
+    static_configs:
+      - targets: ['litellm:4000']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # Smart Cache 指标
+  - job_name: 'smart-cache'
+    static_configs:
+      - targets: ['smart-cache:8777']
+    metrics_path: /metrics
+    scrape_interval: 30s

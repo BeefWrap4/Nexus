@@ -17,7 +17,7 @@ from arq.connections import RedisSettings
 from nexus.config import settings
 from nexus.jobs.dlq import record_dead_letter_job
 from nexus.jobs.scheduler import scheduled_workflow_trigger
-from nexus.jobs.workflow import execute_workflow_job
+from nexus.jobs.workflow import execute_workflow_job, resume_workflow_job
 
 
 async def recover_hitl_tasks() -> list[dict]:
@@ -67,11 +67,33 @@ async def recover_hitl_tasks() -> list[dict]:
 class WorkerSettings:
     """ARQ Worker 配置类."""
 
-    # Redis 连接
-    redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
+    # Redis 连接 (支持哨兵模式)
+    @staticmethod
+    def _get_redis_settings():
+        """获取Redis设置,支持哨兵模式."""
+        if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+            # 哨兵模式 - ARQ不直接支持哨兵协议
+            # 但在Docker Compose中,我们可以直接连接到redis-master服务
+            # 哨兵会确保我们连接到当前的master节点
+            return RedisSettings(
+                host='redis-master',
+                port=6379,
+                password=settings.REDIS_PASSWORD,
+            )
+        else:
+            # 单节点模式
+            from urllib.parse import urlparse
+            parsed = urlparse(settings.REDIS_URL or 'redis://localhost:6379/0')
+            return RedisSettings(
+                host=parsed.hostname or 'localhost',
+                port=parsed.port or 6379,
+                password=parsed.password,
+            )
+    
+    redis_settings = _get_redis_settings.__func__()
 
     # 注册的任务函数
-    functions = [execute_workflow_job]
+    functions = [execute_workflow_job, resume_workflow_job]
 
     # Cron 定时任务（每分钟扫描一次定时工作流）
     cron_jobs = [
@@ -111,7 +133,16 @@ class WorkerSettings:
         try:
             from redis.asyncio import Redis
 
-            r = Redis.from_url(settings.REDIS_URL or "redis://redis:6379/0")
+            # 使用哨兵模式或单节点模式
+            if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+                r = Redis(
+                    host='redis-master',
+                    port=6379,
+                    password=settings.REDIS_PASSWORD,
+                )
+            else:
+                r = Redis.from_url(settings.REDIS_URL or "redis://redis:6379/0")
+            
             await r.ping()
             await r.close()
             return True
@@ -124,12 +155,31 @@ class WorkerSettings:
         import structlog
 
         logger = structlog.get_logger()
+
+        # 确定Redis连接信息用于日志
+        if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+            redis_info = f"sentinel://{settings.REDIS_SENTINEL_MASTER}@{settings.REDIS_SENTINEL_HOSTS}"
+        else:
+            redis_info = settings.REDIS_URL or "redis://localhost:6379/0"
+
         logger.info(
             "arq_worker_started",
             worker_id=ctx.get("worker_id", "unknown"),
-            redis=settings.REDIS_URL,
+            redis=redis_info,
         )
-        
+
+        # 启动 prometheus_client HTTP server (S2-2)
+        # ARQ 的 health_check_port 服务的是 plain OK 文本而非 Prometheus 格式。
+        # 在 9090 端口单独起一个 prom 客户端，让 prometheus.yml 能抓到 worker 指标。
+        try:
+            from prometheus_client import start_http_server
+            start_http_server(9090)
+            logger.info("worker_prometheus_server_started", port=9090)
+        except OSError as e:
+            # 9090 已被占用（例如 2 个 worker 跑在同一 host）
+            # 这种情况下第二个 worker 不会暴露 metrics，但第一个会。
+            logger.warning("worker_prometheus_server_failed", port=9090, error=str(e))
+
         # 更新活跃Worker数量指标
         from nexus.observability.queue_metrics import update_active_workers
         update_active_workers(1)
