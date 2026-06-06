@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -231,14 +232,33 @@ class BaseAgent:
         # 2a. 多模态消息预构建（仅首轮迭代使用）
         mm_messages = self._build_messages(task, system_prompt, memories)
 
+        # 修复 (S5-1): 真 ReAct messages 列表
+        # 之前用 _build_iteration_prompt 字符串拼接 observations 到 user_prompt。
+        # 现在维护完整 messages list，tool 结果作为 role:tool 消息 append，
+        # 这才是 OpenAI / Anthropic 期望的多轮 tool call 格式。
+        messages: list[dict] = []
+
         # 3. ReAct模式循环
         for iteration in range(self.config.max_iterations):
-            # 构建当前轮次的Prompt
-            prompt = self._build_iteration_prompt(
-                task=task,
-                iteration=iteration,
-                observations=observations,
-            )
+            # 修复 (S5-1): 用 messages 列表而非字符串拼接
+            if iteration == 0 and mm_messages is not None:
+                # 多模态首轮：直接用预构建的消息
+                current_messages = mm_messages
+            else:
+                # 文本首轮：建 user message（带 observations 累积）
+                if iteration == 0:
+                    # 第一个 user 消息：任务描述
+                    current_messages = messages + [
+                        {"role": "user", "content": task.description},
+                    ]
+                else:
+                    # 后续轮：用户消息把上一步 observation 装进来
+                    # 这样既保留 messages list 结构（model 能看到完整对话），
+                    # 又解决了"之前 observations 是丢进 user_prompt 字符串里"的问题。
+                    last_obs = observations[-1] if observations else ""
+                    current_messages = messages + [
+                        {"role": "user", "content": f"Previous step result: {last_obs}"},
+                    ]
 
             # LLM调用（通过LiteLLM Proxy，携带 tools）
             # Phase 9: 语义缓存 session_id 使用 trace context 中的 run_id
@@ -248,32 +268,19 @@ class BaseAgent:
             try:
                 async with self._get_semaphore():
                     # 修复 (S4-1): 用 LLMService.generate 走 fallback 链 + retry
-                    # LLMService.generate 的 **kwargs 会转发给底层 LLMClient.call
-                    # 公共 kwargs：model, provider, temperature, max_tokens, tools, messages,
-                    #             enable_semantic_cache, session_id
-                    if mm_messages is not None and iteration == 0:
-                        response = await self.llm_service.generate(
-                            system_prompt=system_prompt,
-                            user_prompt=prompt,
-                            model=self.config.model,
-                            provider=self.config.provider,
-                            temperature=self.config.temperature,
-                            max_tokens=self.config.max_tokens,
-                            tools=openai_tools if openai_tools else None,
-                            messages=mm_messages,
-                        )
-                    else:
-                        response = await self.llm_service.generate(
-                            system_prompt=system_prompt,
-                            user_prompt=prompt,
-                            model=self.config.model,
-                            provider=self.config.provider,
-                            temperature=self.config.temperature,
-                            max_tokens=self.config.max_tokens,
-                            tools=openai_tools if openai_tools else None,
-                            enable_semantic_cache=self.config.enable_semantic_cache,
-                            session_id=session_id,
-                        )
+                    # 修复 (S5-1): 传 messages 列表 (含 role:tool) 让 model 看完整多轮对话
+                    response = await self.llm_service.generate(
+                        system_prompt=system_prompt,
+                        user_prompt="",  # 现在走 messages 路径
+                        model=self.config.model,
+                        provider=self.config.provider,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                        tools=openai_tools if openai_tools else None,
+                        messages=current_messages,
+                        enable_semantic_cache=self.config.enable_semantic_cache,
+                        session_id=session_id,
+                    )
             except Exception as e:
                 raise LLMCallException(str(e), self.config.provider)
 
@@ -287,6 +294,32 @@ class BaseAgent:
                     logger.debug("Response JSON parse failed, using raw text as content", exc_info=True)
                     raw_response = {"choices": [{"message": {"content": raw_response}}]}
             decision = self.decision_parser.parse(raw_response)
+
+            # 修复 (S5-1): 把 assistant 的 tool_calls 写进 messages（让 model 在下一轮看得到）
+            if decision.action == "tool_call" and decision.tool_name:
+                # 从 raw_response 提取 tool_call_id（OpenAI 协议）
+                tool_call_id = None
+                if isinstance(raw_response, dict):
+                    tool_calls = (
+                        raw_response.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("tool_calls", [])
+                    )
+                    if tool_calls:
+                        tool_call_id = tool_calls[0].get("id", f"call_{iteration}")
+
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tool_call_id or f"call_{iteration}",
+                        "type": "function",
+                        "function": {
+                            "name": decision.tool_name,
+                            "arguments": json.dumps(decision.tool_params or {}),
+                        },
+                    }],
+                })
 
             # 处理决策
             if decision.action == "final_answer":
@@ -310,6 +343,15 @@ class BaseAgent:
                     "tool": decision.tool_name,
                     "params": decision.tool_params,
                 })
+                # 修复 (S5-1): 取上一条 assistant.tool_calls 的 id，
+                # 关联到对应的 role:tool 消息（OpenAI 协议要求）
+                tool_call_id_for_response = f"call_{iteration}"
+                if messages and messages[-1].get("role") == "assistant":
+                    tcs = messages[-1].get("tool_calls") or []
+                    if tcs and tcs[0].get("id"):
+                        tool_call_id_for_response = tcs[0]["id"]
+
+                tool_result_content = None
                 if self.tool_registry:
                     try:
                         result = await self.tool_registry.execute(
@@ -325,6 +367,9 @@ class BaseAgent:
                             f"Tool '{decision.tool_name}' executed successfully. "
                             f"Result: {result.data if result.success else result.error}"
                         )
+                        tool_result_content = (
+                            str(result.data) if result.success else str(result.error)
+                        )
                         observations.append({
                             "tool": decision.tool_name,
                             "params": decision.tool_params,
@@ -334,18 +379,19 @@ class BaseAgent:
                     except Exception as exc:
                         # 工具执行失败，记录结构化错误
                         from nexus.exceptions import NexusException, NexusErrorCode
-                        
+
                         error_details = {
                             "tool_name": decision.tool_name,
                             "params": decision.tool_params,
                             "error_type": type(exc).__name__,
                         }
-                        
+
                         # 如果已经是NexusException，保留其错误码
                         if isinstance(exc, NexusException):
                             error_details["code"] = exc.error_code.value if hasattr(exc, 'error_code') else None
-                        
+
                         obs_text = f"Tool '{decision.tool_name}' failed: {str(exc)}"
+                        tool_result_content = obs_text
                         observations.append({
                             "tool": decision.tool_name,
                             "params": decision.tool_params,
@@ -355,12 +401,21 @@ class BaseAgent:
                         })
                 else:
                     obs_text = "[ToolRegistry not configured — tool execution skipped]"
+                    tool_result_content = obs_text
                     observations.append({
                         "tool": decision.tool_name,
                         "params": decision.tool_params,
                         "result": obs_text,
                         "success": False,
                     })
+
+                # 修复 (S5-1): 把工具结果作为 role:tool 消息 append 到 messages
+                # 这样 model 在下一轮能看到完整的 tool result（不再用字符串拼接）
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id_for_response,
+                    "content": tool_result_content or obs_text,
+                })
 
             elif decision.action == "think":
                 # 纯思考，继续循环

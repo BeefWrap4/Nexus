@@ -165,26 +165,30 @@ class LLMService:
 
     async def generate(
         self,
-        system_prompt: str,
-        user_prompt: str,
+        system_prompt: str = "",
+        user_prompt: str = "",
         model: Optional[str] = None,
         context: Optional[dict[str, Any]] = None,
+        messages: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """生成LLM响应（含重试 + Fallback链 + pre-call 配额检查）.
 
         这是业务层主要使用的接口。
         调用流程：
-        0. 修复 (S4-3): pre-call 配额检查 — tenant 超 max_tokens_per_month 直接抛 QuotaExceededException
+        0. 修复 (S4-3): pre-call 配额检查 — tenant 超 max_tokens_per-month 直接抛 QuotaExceededException
         1. 使用指定模型（或默认模型）尝试调用
         2. 失败则按配置重试
         3. 仍失败则按Fallback链切换备用模型
         4. 全局并发控制
 
         Args:
-            system_prompt: 系统提示词
-            user_prompt: 用户提示词
+            system_prompt: 系统提示词（与 messages 互斥；都提供时 messages 优先）
+            user_prompt: 用户提示词（同上）
             model: 指定模型，默认使用 settings.DEFAULT_LLM_MODEL
+            messages: 完整 OpenAI 格式 messages list（修复 S5-1：
+                多轮 ReAct 用，role 可以是 system/user/assistant/tool）
+            context: 调用上下文（tenant_id 等）
             **kwargs: 其他参数（temperature, max_tokens, tools 等）
 
         Returns:
@@ -243,11 +247,17 @@ class LLMService:
                     # 记录 fallback 信息（如果使用了非主模型）
                     if m != primary_model:
                         set_trace_context(fallback_model=m)
+                    # 修复 (S5-1): messages 模式 — 多轮 ReAct 用 OpenAI messages list
+                    # 如果 caller 传了 messages，透传到 _call_with_retry；
+                    # 否则走老的 (system, user) 二元组路径（向后兼容）
+                    call_kwargs = dict(kwargs)
+                    if messages is not None:
+                        call_kwargs["messages"] = messages
                     return await self._call_with_retry(
                         model=m,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
-                        **kwargs,
+                        **call_kwargs,
                     )
                 except LLMCallException as e:
                     last_error = e
