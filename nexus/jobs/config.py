@@ -129,20 +129,20 @@ class WorkerSettings:
     # Worker 启动/关闭钩子 (ARQ 0.26+ 要求 staticmethod 签名)
     @staticmethod
     async def health_check() -> bool:
-        """验证ARQ连接和Redis状态."""
+        """验证ARQ连接和Redis状态.
+
+        修复 (S1-2): 通过 Sentinel 实时发现 master，不再硬编码 host='redis-master'。
+        """
         try:
+            from nexus.jobs.pool import _resolve_master_via_sentinel
             from redis.asyncio import Redis
 
-            # 使用哨兵模式或单节点模式
-            if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
-                r = Redis(
-                    host='redis-master',
-                    port=6379,
-                    password=settings.REDIS_PASSWORD,
-                )
-            else:
-                r = Redis.from_url(settings.REDIS_URL or "redis://redis:6379/0")
-            
+            host, port = await _resolve_master_via_sentinel()
+            r = Redis(
+                host=host,
+                port=port,
+                password=settings.REDIS_PASSWORD,
+            )
             await r.ping()
             await r.close()
             return True
@@ -156,11 +156,19 @@ class WorkerSettings:
 
         logger = structlog.get_logger()
 
-        # 确定Redis连接信息用于日志
-        if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
-            redis_info = f"sentinel://{settings.REDIS_SENTINEL_MASTER}@{settings.REDIS_SENTINEL_HOSTS}"
-        else:
-            redis_info = settings.REDIS_URL or "redis://localhost:6379/0"
+        # 修复 (S1-2): 通过 Sentinel 实时发现 master，覆盖 _get_redis_settings 的默认值
+        try:
+            from nexus.jobs.pool import _resolve_master_via_sentinel
+            host, port = await _resolve_master_via_sentinel()
+            WorkerSettings._resolved_master = (host, port)
+            redis_info = f"sentinel-discovered://{host}:{port}"
+        except Exception as e:
+            # 哨兵发现失败时 fallback 到单节点或默认
+            logger.warning("sentinel_discovery_failed_using_fallback", error=str(e))
+            if settings.use_redis_sentinel and settings.REDIS_SENTINEL_HOSTS:
+                redis_info = f"sentinel://{settings.REDIS_SENTINEL_MASTER}@{settings.REDIS_SENTINEL_HOSTS}"
+            else:
+                redis_info = settings.REDIS_URL or "redis://localhost:6379/0"
 
         logger.info(
             "arq_worker_started",
