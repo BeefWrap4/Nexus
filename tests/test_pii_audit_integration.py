@@ -759,3 +759,245 @@ async def test_runtime_config_is_audit_enabled_caches(monkeypatch):
     assert r3 is True
     assert call_count["n"] == 2, f"expected 2 cache misses, got {call_count['n']}"
     rc.invalidate_cache()
+
+
+# ---------------------------------------------------------------------------
+# 1.5.3 P1 修复: API key 请求现在也写 audit row
+# ---------------------------------------------------------------------------
+#
+# 背景: review 发现 auth_context_middleware 对 X-API-Key 路径
+# 把 tenant_id 留 None, audit_middleware 因此跳过写 audit_logs。
+# 修复: 在 auth_context_middleware 内部做一次 minimal DB lookup
+# (按 key_prefix 索引), 拿 tenant_id 写进 request.state.user。
+# 下面两个测试锁定这个行为。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auth_context_middleware_resolves_api_key_tenant_id(monkeypatch):
+    """Unit: 给出有效 API key 时, auth_context_middleware 在 state.user 上写入 tenant_id.
+
+    不走完整 app 链, 单独测中间件, 用 in-memory engine + APIKey 行 stub 出
+    prefix 解析。验证:
+    1. request.state.user 不再是 None
+    2. tenant_id 正确解析
+    3. role == "service" (区别于 JWT 路径的 "admin"/"member")
+    4. auth_type == "api_key"
+    5. key_id / key_prefix 都带上
+    """
+    import asyncio
+    from uuid import uuid4
+    from datetime import datetime, timezone, timedelta
+
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+    from nexus.db.database import Base
+    from nexus.models.tenant import Tenant, APIKey
+    from nexus.security.auth import AuthService
+    from nexus.security.auth_context_middleware import (
+        auth_context_middleware,
+    )
+
+    # 独立 in-memory engine — 只建 tenants + api_keys (audit 用了 JSONB, 跳过)
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    Sess = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+    async with eng.begin() as conn:
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=[Tenant.__table__, APIKey.__table__],
+        )
+
+    tenant_id = str(uuid4())
+    async with Sess() as s:
+        s.add(Tenant(id=tenant_id, name="apikey-test-tenant", slug=f"apikey-{tenant_id[:8]}"))
+        await s.commit()
+
+    # 生成一个真实格式的 API key
+    api_key, key_prefix, key_hash = AuthService.generate_api_key(
+        name="audit-test-key",
+        tenant_id=tenant_id,
+        user_id=None,
+        expires_days=30,
+    )
+    key_id = uuid4()
+    async with Sess() as s:
+        s.add(
+            APIKey(
+                id=key_id,
+                tenant_id=tenant_id,
+                user_id=None,
+                name="audit-test-key",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                rate_limit=1000,
+                rate_window=60,
+                expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            )
+        )
+        await s.commit()
+
+    # Patch 主进程 engine 上的 AsyncSessionLocal → 用我们的 in-memory session,
+    # 让 auth_context_middleware 查得到这条 key
+    from nexus.db import database as db_mod
+    from nexus.security import auth_context_middleware as acm
+
+    original_local = db_mod.AsyncSessionLocal
+    db_mod.AsyncSessionLocal = Sess
+    # 注意: acm 内是 `from nexus.db.database import AsyncSessionLocal` 局部导入,
+    # 所以 patch 的是 db_mod 上的属性; 函数内重新 import 会拿到 patched 值。
+    monkeypatch.setattr(acm, "AsyncSessionLocal", Sess, raising=False)
+
+    try:
+        captured_user = {"value": "NOT_SET"}
+
+        async def _call_next(request):
+            captured_user["value"] = request.state.user
+            return MagicMock(spec=["status_code"])
+
+        class _FakeRequest:
+            def __init__(self):
+                self.headers = {"X-API-Key": api_key}
+                self.state = MagicMock()
+
+        req = _FakeRequest()
+        await auth_context_middleware(req, _call_next)
+
+        user = captured_user["value"]
+        assert user is not None, "API key 路径上 state.user 不应为 None"
+        assert user["tenant_id"] == tenant_id, (
+            f"tenant_id 解析错误, got {user.get('tenant_id')!r}, expected {tenant_id!r}"
+        )
+        assert user["auth_type"] == "api_key"
+        assert user["role"] == "service"
+        assert user["key_prefix"] == key_prefix
+        assert user["key_id"] == str(key_id)
+        assert user["id"] is None  # API key 不是 user
+    finally:
+        db_mod.AsyncSessionLocal = original_local
+        await eng.dispose()
+    # 给 event loop 一点时间, 避免在 Windows 上 'unclosed database' 警告
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_audit_log_written_for_api_key_request():
+    """Integration: 走完整 FastAPI app 链, 真实 X-API-Key POST, 验证 audit row 真的写出来.
+
+    这是 P1 修复的端到端验证 — auth_context_middleware + audit_middleware
+    共同工作, 写一行带正确 tenant_id 的 audit_logs 行。
+    """
+    import asyncio
+    from uuid import uuid4
+    from datetime import datetime, timezone, timedelta
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+    from nexus.api.main import app
+    from nexus.db.database import Base, get_db
+    from nexus.models import AuditLog, Tenant
+    from nexus.models.tenant import APIKey
+    from nexus.security.auth import AuthService
+
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with test_engine.begin() as conn:
+        await conn.run_sync(
+            Base.metadata.create_all,
+            tables=[AuditLog.__table__, Tenant.__table__, APIKey.__table__],
+        )
+
+    async def _override_get_db():
+        async with TestSession() as s:
+            yield s
+
+    app.dependency_overrides[get_db] = _override_get_db
+
+    # 把应用级 + middleware 用的 session factory 都指到我们这套
+    from nexus.db import database as db_mod
+    from nexus.security import audit_middleware as am
+    from nexus.security import auth_context_middleware as acm
+
+    original_db_local = db_mod.AsyncSessionLocal
+    original_am_local = am.AsyncSessionLocal
+    original_acm_local = getattr(acm, "AsyncSessionLocal", None)
+
+    db_mod.AsyncSessionLocal = TestSession
+    am.AsyncSessionLocal = TestSession
+    acm.AsyncSessionLocal = TestSession
+
+    try:
+        tenant_id = str(uuid4())
+        async with TestSession() as s:
+            s.add(Tenant(id=tenant_id, name="apikey-audit-tenant", slug=f"apikey-audit-{tenant_id[:8]}"))
+            await s.commit()
+
+        api_key, key_prefix, key_hash = AuthService.generate_api_key(
+            name="audit-integration-key",
+            tenant_id=tenant_id,
+            user_id=None,
+            expires_days=30,
+        )
+        key_id = uuid4()
+        async with TestSession() as s:
+            s.add(
+                APIKey(
+                    id=key_id,
+                    tenant_id=tenant_id,
+                    user_id=None,
+                    name="audit-integration-key",
+                    key_hash=key_hash,
+                    key_prefix=key_prefix,
+                    rate_limit=1000,
+                    rate_window=60,
+                    expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+                )
+            )
+            await s.commit()
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            # 故意发个无效 payload (Pydantic schema 校验会失败), 返 422;
+            # 或 RBAC 因 permissions=[] 返 403 — 都 OK, audit_middleware 只跳 5xx。
+            resp = await ac.post(
+                "/api/v1/workflows/",
+                json={"__invalid__": "P1 fix api-key audit test"},
+                headers={"X-API-Key": api_key},
+            )
+            assert resp.status_code in (200, 201, 401, 403, 422, 500), resp.text
+
+        # 异步 commit — 等一下
+        await asyncio.sleep(0.2)
+
+        async with TestSession() as s:
+            result = await s.execute(
+                text(
+                    "SELECT COUNT(*) FROM audit_logs "
+                    "WHERE tenant_id = :tid "
+                    "AND action = 'POST'"
+                ),
+                {"tid": tenant_id},
+            )
+            count = result.scalar()
+            assert count is not None and count > 0, (
+                "No audit log row for the API-key POST through real FastAPI "
+                "app — P1 fix (auth_context_middleware leaves tenant_id=None "
+                "for X-API-Key) regression"
+            )
+    finally:
+        db_mod.AsyncSessionLocal = original_db_local
+        am.AsyncSessionLocal = original_am_local
+        if original_acm_local is not None:
+            acm.AsyncSessionLocal = original_acm_local
+        else:
+            try:
+                del acm.AsyncSessionLocal
+            except AttributeError:
+                pass
+        app.dependency_overrides.pop(get_db, None)
+        await test_engine.dispose()
+        await asyncio.sleep(0)
