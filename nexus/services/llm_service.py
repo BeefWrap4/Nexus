@@ -44,6 +44,7 @@ class LLMService:
         base_delay: Optional[float] = None,
         max_delay: Optional[float] = None,
         backoff_multiplier: Optional[float] = None,
+        tenant_id: Optional[str] = None,
     ):
         """初始化LLMService.
 
@@ -54,8 +55,19 @@ class LLMService:
             base_delay: 重试基础延迟（秒），默认从settings读取。
             max_delay: 重试最大延迟（秒），默认从settings读取。
             backoff_multiplier: 退避倍数，默认从settings读取。
+            tenant_id: 租户 ID (P2 / Task 1.5.5) — 透传到 LLMClient, 决定
+                PII 脱敏是否走 per-tenant runtime 开关 (SystemSetting 表)。
+                None 时 LLMClient 内部走 no-tenant 路径 (debug log + skip PII)。
         """
-        self.client = client or LLMClient()
+        if client is not None:
+            self.client = client
+            # P2 (Task 1.5.5): 如果 caller 自己注入了 LLMClient, 但没设 tenant_id,
+            # 但 service 知道 tenant_id (从 context), 把 tenant_id 同步到 client。
+            # 这条路让老调用方零改动就能用上 per-tenant PII guard。
+            if tenant_id and not client.tenant_id:
+                client.tenant_id = tenant_id
+        else:
+            self.client = LLMClient(tenant_id=tenant_id)
         self.fallback_chain = fallback_chain or settings.LLM_FALLBACK_CHAIN or []
         self.max_retries = max_retries if max_retries is not None else settings.LLM_MAX_RETRIES
         self.base_delay = base_delay if base_delay is not None else settings.LLM_RETRY_BASE_DELAY
@@ -65,6 +77,9 @@ class LLMService:
             if backoff_multiplier is not None
             else settings.LLM_RETRY_BACKOFF_MULTIPLIER
         )
+        # P2 (Task 1.5.5): service 自己的 tenant_id 兜底 — 当 LLMClient 是外部
+        # 注入且 tenant_id 已经被显式设置过, service.tenant_id 跟它对齐。
+        self.tenant_id = tenant_id or (self.client.tenant_id if self.client else None)
 
     # ------------------------------------------------------------------
     # 并发控制
@@ -254,6 +269,14 @@ class LLMService:
                     call_kwargs = dict(kwargs)
                     if messages is not None:
                         call_kwargs["messages"] = messages
+                    # P2 (Task 1.5.5): 把 tenant_id 透传到 LLMClient.call,
+                    # 让 PII 脱敏走 per-tenant runtime 开关 (SystemSetting)。
+                    # 优先用 context 里的 (即 caller 提供的), 退到 service
+                    # self.tenant_id (从 __init__ 传进来的), 再退到 client.tenant_id。
+                    if "tenant_id" not in call_kwargs:
+                        call_kwargs["tenant_id"] = (
+                            tenant_id or self.tenant_id or self.client.tenant_id
+                        )
                     return await self._call_with_retry(
                         model=m,
                         system_prompt=system_prompt,
@@ -307,6 +330,7 @@ class LLMService:
         system_prompt: str,
         user_prompt: str,
         model: Optional[str] = None,
+        context: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
         """流式生成LLM响应.
@@ -318,6 +342,7 @@ class LLMService:
             system_prompt: 系统提示词
             user_prompt: 用户提示词
             model: 指定模型
+            context: 调用上下文 (P2 / Task 1.5.5: tenant_id 用这个透传)
             **kwargs: 其他参数
 
         Yields:
@@ -325,12 +350,20 @@ class LLMService:
         """
         target_model = model or settings.DEFAULT_LLM_MODEL
 
+        # P2 (Task 1.5.5): 把 tenant_id 透传到 LLMClient.stream_call
+        call_kwargs = dict(kwargs)
+        if "tenant_id" not in call_kwargs:
+            ctx_tenant = (context or {}).get("tenant_id")
+            call_kwargs["tenant_id"] = (
+                ctx_tenant or self.tenant_id or self.client.tenant_id
+            )
+
         async with self._get_semaphore():
             async for chunk in self.client.stream_call(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model=target_model,
-                **kwargs,
+                **call_kwargs,
             ):
                 yield chunk
 

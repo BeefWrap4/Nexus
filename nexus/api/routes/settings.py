@@ -176,6 +176,18 @@ async def save_security_settings(
     except Exception:  # noqa: BLE001
         # cache 失效失败不影响主流程 — 下一次 cache TTL 到期也会刷新
         pass
+    # P2 fix (Task 1.5.5): 显式 invalidate 掉 LLMClient 的 per-tenant
+    # PIIGuard 实例缓存 — 之前 runtime_config.invalidate_cache 只清
+    # system_settings 那一层 30s cache, 不会重建 _guard_cache 里的
+    # PIIGuard 实例 (但 PII 过滤开关的"开/关"取决于 is_pii_enabled
+    # 返回值, 不取决于 guard 实例本身, 所以这里主要是"防御性" —
+    # 万一未来 guard 实例里加了 per-tenant 状态, 这里也保证立即生效)。
+    try:
+        from nexus.agent.llm_client import invalidate_pii_guard_cache
+        invalidate_pii_guard_cache(tenant_id)
+    except Exception:  # noqa: BLE001
+        # 跟上面一样 — cache 失效失败不影响主流程
+        pass
     return {"ok": True, "saved": count, "category": "security"}
 
 

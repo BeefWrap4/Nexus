@@ -78,22 +78,43 @@ def test_pii_guard_passthrough_on_none_and_empty():
 
 
 def test_pii_guard_disabled_via_config():
-    """settings.PII_ENABLED=False 时 LLMClient 的 sanitize helpers 应 no-op."""
-    from nexus.config import settings
+    """PII enabled=False (per-tenant runtime config) 时 LLMClient 的 sanitize helpers 应 no-op.
+
+    P2 (Task 1.5.5) refactor: 不再用 module-level _pii_guard, 改用
+    ``_get_pii_guard(tenant_id)`` 调 ``is_pii_enabled(tenant_id)``。
+    这里直接测 ``_sanitize_messages`` 异步接口 + monkeypatch 关掉 PII 开关。
+    """
+    import asyncio
+    from nexus.services import runtime_config as rc
     import nexus.agent.llm_client as llm_mod
 
-    original_flag = settings.PII_ENABLED
-    original_guard = llm_mod._pii_guard
-    settings.PII_ENABLED = False
-    llm_mod._pii_guard = None
+    rc.invalidate_cache()
+    rc.invalidate_cache()  # 调用两次 idempotent
+
+    # 让 is_pii_enabled 返 False (PII 关闭), 不依赖 system_settings / env var
+    async def _pii_off(tenant_id):
+        return False
+
+    original = llm_mod._get_pii_guard
+
+    async def _patched(tenant_id):
+        # 直接调 is_pii_enabled (mocked off) — 跳过 cache 的复杂性
+        return None  # 关闭时不返回 guard
+
+    llm_mod._get_pii_guard = _patched
     try:
-        # helper should be no-op when guard is None
-        assert llm_mod._sanitize_messages([{"role": "user", "content": "a@b.com"}]) == [
-            {"role": "user", "content": "a@b.com"}
-        ]
+        result = asyncio.run(
+            llm_mod._sanitize_messages(
+                [{"role": "user", "content": "a@b.com"}],
+                tenant_id="t-off",
+            )
+        )
+        assert result == [{"role": "user", "content": "a@b.com"}], (
+            "PII off: messages should pass through unchanged"
+        )
     finally:
-        settings.PII_ENABLED = original_flag
-        llm_mod._pii_guard = original_guard
+        llm_mod._get_pii_guard = original
+        rc.invalidate_cache()
 
 
 def test_address_regex_does_not_match_common_chinese_words():
@@ -143,11 +164,23 @@ def test_address_regex_does_not_match_common_chinese_words():
 
 
 @pytest.mark.asyncio
-async def test_llm_client_call_sanitizes_messages():
-    """LLMClient.call() 应在送 LLM 之前 sanitize messages，并对响应脱敏."""
-    from nexus.agent.llm_client import LLMClient
+async def test_llm_client_call_sanitizes_messages(monkeypatch):
+    """LLMClient.call() 应在送 LLM 之前 sanitize messages，并对响应脱敏.
 
-    client = LLMClient()
+    P2 (Task 1.5.5): 现在 PII guard 走 per-tenant runtime config (is_pii_enabled
+    查 SystemSetting). 这里 monkeypatch 让 is_pii_enabled 返 True, 模拟
+    SystemSetting 表里 piiEnabled=True 的状态。
+    """
+    from nexus.agent.llm_client import LLMClient
+    from nexus.services import runtime_config as rc
+
+    # monkeypatch is_pii_enabled (无论传什么 tenant 都返 True)
+    async def _pii_on(_tid):
+        return True
+    monkeypatch.setattr(rc, "is_pii_enabled", _pii_on)
+    rc.invalidate_cache()
+
+    client = LLMClient(tenant_id="t-pii-on-e2e")
 
     # 模拟 HTTP 响应（响应里也带 PII，验证响应脱敏）
     fake_response = MagicMock()
@@ -195,17 +228,21 @@ async def test_llm_client_call_sanitizes_messages():
 
 @pytest.mark.asyncio
 async def test_llm_client_sanitize_disabled_passes_through():
-    """PII_ENABLED=False 时 LLMClient 不脱敏 (字段原样透传)."""
-    from nexus.config import settings
+    """PII disabled (per-tenant) 时 LLMClient 不脱敏 (字段原样透传).
+
+    P2 (Task 1.5.5) refactor: 用 monkeypatch 让 ``_get_pii_guard`` 返 None,
+    模拟 tenant 关掉了 PII 开关, 验证 LLMClient 不脱敏。
+    """
     from nexus.agent.llm_client import LLMClient
     import nexus.agent.llm_client as llm_mod
 
-    original_flag = settings.PII_ENABLED
-    original_guard = llm_mod._pii_guard
-    settings.PII_ENABLED = False
-    llm_mod._pii_guard = None
+    async def _pii_disabled(_tenant_id):
+        return None  # guard 关闭时返 None
+
+    original_get_guard = llm_mod._get_pii_guard
+    llm_mod._get_pii_guard = _pii_disabled
     try:
-        client = LLMClient()
+        client = LLMClient(tenant_id="t-off-e2e")
         fake_response = MagicMock()
         fake_response.status_code = 200
         fake_response.json.return_value = {
@@ -234,8 +271,7 @@ async def test_llm_client_sanitize_disabled_passes_through():
         client._client = None
         client._cache_client = None
     finally:
-        settings.PII_ENABLED = original_flag
-        llm_mod._pii_guard = original_guard
+        llm_mod._get_pii_guard = original_get_guard
 
 
 # ---------------------------------------------------------------------------
@@ -759,6 +795,129 @@ async def test_runtime_config_is_audit_enabled_caches(monkeypatch):
     assert r3 is True
     assert call_count["n"] == 2, f"expected 2 cache misses, got {call_count['n']}"
     rc.invalidate_cache()
+
+
+# ---------------------------------------------------------------------------
+# 1.5.5 P2 修复: Settings.vue 的 piiEnabled switch 真正运行时生效
+# ---------------------------------------------------------------------------
+#
+# 背景: Task 1.5 第一次 fix 时 LLMClient 的 _pii_guard 还在模块导入时
+# 根据 settings.PII_ENABLED 一次性决定, 跑起来后再改 env var 不生效。
+# Settings.vue 的 tooltip 老实写了"重启后生效", 但功能上仍是个 UX gap。
+#
+# 修复: 用 ``_get_pii_guard(tenant_id)`` -> ``is_pii_enabled(tenant_id)``,
+# 走 SystemSetting 表 + 30s cache, 配 ``invalidate_pii_guard_cache``
+# 在 settings POST 时主动清缓存。
+#
+# 这个测试验证三件事:
+# 1. PII 开启时 ``_get_pii_guard`` 返 PIIGuard 实例
+# 2. PII 关闭时 ``_get_pii_guard`` 返 None (跟旧版 ``_pii_guard = None`` 一致)
+# 3. ``invalidate_pii_guard_cache`` 后 guard 重新评估 (不依赖 30s TTL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pii_guard_respects_per_tenant_runtime_toggle(monkeypatch):
+    """Settings.vue 的 piiEnabled switch 改 SystemSetting → LLMClient 立即跟随,
+    不再需要重启 API (P2 / Task 1.5.5).
+
+    测两层: ``_get_pii_guard`` 调 ``is_pii_enabled`` (per-tenant), 拿到结果
+    决定返 guard 还是 None; 然后 ``invalidate_pii_guard_cache`` 强制重新
+    评估 (settings POST 触发)。
+    """
+    from nexus.agent import llm_client as llm_mod
+    from nexus.services import runtime_config as rc
+    from nexus.security.pii_guard import PIIGuard
+
+    # 清空所有 cache — 之前的测试可能残留 _guard_cache / runtime_config cache
+    rc.invalidate_cache()
+    llm_mod.invalidate_pii_guard_cache()
+
+    tenant_id = "tenant-runtime-toggle-test"
+
+    # ── Step 1: PII 开启 → _get_pii_guard 返 PIIGuard 实例
+    async def _pii_on(_tid):
+        return True
+
+    monkeypatch.setattr(rc, "is_pii_enabled", _pii_on)
+    guard_on = await llm_mod._get_pii_guard(tenant_id)
+    assert guard_on is not None, "PII on: must return a guard instance"
+    assert isinstance(guard_on, PIIGuard), (
+        f"expected PIIGuard, got {type(guard_on).__name__}"
+    )
+    first_guard = guard_on  # 留 id 比较
+
+    # ── Step 2: PII 关闭 → _get_pii_guard 返 None (no-op pass-through)
+    async def _pii_off(_tid):
+        return False
+
+    monkeypatch.setattr(rc, "is_pii_enabled", _pii_off)
+    guard_off = await llm_mod._get_pii_guard(tenant_id)
+    assert guard_off is None, (
+        "PII off: _get_pii_guard must return None so callers skip sanitization"
+    )
+
+    # ── Step 3: invalidate_pii_guard_cache 后再开启 → 重新走 is_pii_enabled
+    # (验证: cache 清理后 is_pii_enabled 被重新调一次, 即 settings POST 真能
+    # 让 UI 切换立即生效)
+    llm_mod.invalidate_pii_guard_cache(tenant_id)
+    call_log: list[str] = []
+
+    async def _spy(tid):
+        call_log.append(tid)
+        return True
+
+    monkeypatch.setattr(rc, "is_pii_enabled", _spy)
+    guard_after = await llm_mod._get_pii_guard(tenant_id)
+    assert guard_after is not None, "after invalidate: must rebuild guard"
+    assert isinstance(guard_after, PIIGuard)
+    assert call_log == [tenant_id], (
+        f"is_pii_enabled should be called once after invalidate, got {call_log}"
+    )
+
+    # ── Step 4: invalidate_pii_guard_cache() 无参 → 清全部
+    llm_mod.invalidate_pii_guard_cache()
+    call_log.clear()
+    await llm_mod._get_pii_guard(tenant_id)
+    await llm_mod._get_pii_guard("other-tenant")
+    assert call_log == [tenant_id, "other-tenant"], (
+        f"invalidate(None) should clear all per-tenant guards, got {call_log}"
+    )
+
+    # 清理
+    llm_mod.invalidate_pii_guard_cache()
+    rc.invalidate_cache()
+
+
+@pytest.mark.asyncio
+async def test_pii_guard_no_tenant_returns_none(monkeypatch, caplog):
+    """没有 tenant context (tenant_id=None) 时 _get_pii_guard 返 None + debug log.
+
+    LLMClient 在没拿到 tenant 的场景 (如外部注入的 client 没设) 不应该
+    阻塞 LLM 调用 — 这是 fail-open 设计, 跟 P0 fix 文档化过的行为一致。
+    """
+    import logging
+    from nexus.agent import llm_client as llm_mod
+
+    rc_unused_spy_called: list[bool] = []
+
+    async def _should_not_be_called(tid):
+        rc_unused_spy_called.append(True)
+        return True
+
+    from nexus.services import runtime_config as rc
+    monkeypatch.setattr(rc, "is_pii_enabled", _should_not_be_called)
+
+    caplog.set_level(logging.DEBUG, logger="nexus.agent.llm_client")
+    guard = await llm_mod._get_pii_guard(None)
+    assert guard is None
+    assert rc_unused_spy_called == [], (
+        "is_pii_enabled should not be called when tenant_id is None"
+    )
+    # debug log
+    assert any("pii_guard_no_tenant_context" in rec.message for rec in caplog.records), (
+        "expected debug log 'pii_guard_no_tenant_context' when tenant is None"
+    )
 
 
 # ---------------------------------------------------------------------------

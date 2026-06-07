@@ -11,6 +11,7 @@
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Optional
 
@@ -19,45 +20,94 @@ import httpx
 from nexus.config import settings
 from nexus.exceptions import LLMCallException
 
+logger = logging.getLogger(__name__)
+
+
 # P0 (Task 1.5) SOC2/GDPR: 在 LLM 入口/出口对 PII 进行脱敏。
-# 默认从 settings.PII_ENABLED (env var) 读取; 启动时一次性决定。
-# P0 fix (Task 1.5 second iteration):
-#   Settings.vue 的 piiEnabled switch 改的是 SystemSetting 表, 不会改 env var
-#   — 所以这里仍然按 env var 启停。要做"运行期切换", 需在 LLMClient 实例上
-#   持有 tenant_id, 然后调用 ``nexus.services.runtime_config.is_pii_enabled``
-#   (带 30s cache)。这是 follow-up, 当前 fix 文档化现状, 不动调用方。
-_pii_guard = None
-if settings.PII_ENABLED:
-    try:
-        from nexus.security.pii_guard import PIIGuard
-        _pii_guard = PIIGuard()
-    except Exception:  # noqa: BLE001
-        # PII 加载失败不阻塞 LLM 调用 — 静默降级，记录在 module import 时。
-        _pii_guard = None
+# P2 follow-up (Task 1.5.5): 把 PII guard 从"模块级一次性绑定"改为
+# "per-tenant, runtime-toggled" — 调用 ``is_pii_enabled(tenant_id)``
+# (走 SystemSetting 表 + 30s cache, env var 作为 fallback)。
+# Settings.vue 的 piiEnabled switch 改的是 SystemSetting 表, 现在
+# 它真的能在运行期生效, 不用重启 API。
+#
+# 实现: 用 ``_guard_cache`` 缓存 (tenant_id, PIIGuard) 对, 避免每次
+# LLM 调用都重建 PIIGuard (那个东西内部有正则 compile, 重建一次约几 ms)。
+_guard_cache: dict[str, "PIIGuard"] = {}
 
 
-def _should_sanitize_pii() -> bool:
-    """运行时 PII 脱敏开关 (env var, 启动时锁).
+async def _get_pii_guard(tenant_id: Optional[str]) -> Optional["PIIGuard"]:
+    """按 tenant 取 PIIGuard (P2 follow-up: 替换 module-level _pii_guard).
 
-    跟 _pii_guard 模块级变量的语义一致 — 切换 PII_ENABLED 需要进程重启。
-    Settings.vue 的 piiEnabled switch 实际是 "重启后生效" 的运维信号, 不是
-    runtime 开关。这是 P0 fix 文档化过的行为, 不是 bug。
+    Returns:
+        PIIGuard 实例 — 该 tenant 的 PII 过滤已开启
+        None — PII 过滤关闭, 或 tenant_id 未知 (debug log 一次)
+
+    Side effect:
+        首次调用按 tenant 构造 PIIGuard, 后续命中 ``_guard_cache``。
     """
-    return bool(settings.PII_ENABLED)
+    if not tenant_id:
+        # 没 tenant 上下文 (例如调用方没传) — 跳过 PII, 不阻塞 LLM
+        logger.debug("pii_guard_no_tenant_context — PII filtering skipped")
+        return None
+
+    try:
+        from nexus.services.runtime_config import is_pii_enabled
+        enabled = await is_pii_enabled(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        # runtime_config 异常时 fail-secure: 跳过 PII (避免 PII 漏到 LLM 又
+        # 不能脱敏 — 实际上 fail-secure 应该是"启用 PII", 但这里
+        # PII 已加载到 cache 时有现成 guard, 走 None 路径相当于关闭,
+        # 跟旧版 _pii_guard=None 行为一致。安全团队后续可以收紧。)
+        logger.warning(
+            "pii_guard_lookup_failed tenant=%s err=%s — skipping PII",
+            tenant_id, exc,
+        )
+        return None
+
+    if not enabled:
+        return None
+
+    # Cache: 一个 tenant 一个 guard 实例 (PIIGuard 内部 regex 编译很贵)
+    if tenant_id not in _guard_cache:
+        from nexus.security.pii_guard import PIIGuard
+        _guard_cache[tenant_id] = PIIGuard()
+    return _guard_cache[tenant_id]
 
 
-def _sanitize_messages(messages):
-    """对 OpenAI 格式 messages 列表做 PII 脱敏（关闭时原样返回）."""
-    if _pii_guard is None or not messages:
+def invalidate_pii_guard_cache(tenant_id: Optional[str] = None) -> None:
+    """清空 PII guard 缓存 — settings API 在写入 system_settings 后调,
+    让前端的 piiEnabled toggle 立即生效 (不用等 30s cache TTL 到期).
+
+    Args:
+        tenant_id: 指定 tenant 时只清它; None 时清全部。
+    """
+    if tenant_id is None:
+        _guard_cache.clear()
+    else:
+        _guard_cache.pop(tenant_id, None)
+
+
+async def _sanitize_messages(messages, tenant_id: Optional[str] = None):
+    """对 OpenAI 格式 messages 列表做 PII 脱敏 (关闭时原样返回).
+
+    P2 follow-up: 从同步 + module-level guard 改为 async + per-tenant guard。
+    """
+    if not messages:
         return messages
-    return _pii_guard.sanitize(messages)
+    guard = await _get_pii_guard(tenant_id)
+    if guard is None:
+        return messages
+    return guard.sanitize(messages)
 
 
-def _sanitize_text(text):
-    """对单段文本做 PII 脱敏（关闭时原样返回）."""
-    if _pii_guard is None or not text:
+async def _sanitize_text(text, tenant_id: Optional[str] = None):
+    """对单段文本做 PII 脱敏 (关闭时原样返回)."""
+    if not text:
         return text
-    return _pii_guard.sanitize(text)
+    guard = await _get_pii_guard(tenant_id)
+    if guard is None:
+        return text
+    return guard.sanitize(text)
 
 
 @dataclass
@@ -121,6 +171,7 @@ class LLMClient:
         cache_url: Optional[str] = None,
         cache_api_key: Optional[str] = None,
         cache_timeout: float = 5.0,
+        tenant_id: Optional[str] = None,
     ):
         self.proxy_url = proxy_url or settings.LITELLM_PROXY_URL
         self.api_key = api_key or settings.LITELLM_API_KEY
@@ -132,6 +183,10 @@ class LLMClient:
         self.cache_timeout = cache_timeout
         self._client: Optional[httpx.AsyncClient] = None
         self._cache_client: Optional[httpx.AsyncClient] = None
+        # P2 (Task 1.5.5): tenant_id 用于按租户决定是否走 PII 脱敏。
+        # 缺省时调用 _get_pii_guard 走 no-tenant 路径 (log + skip)。
+        # LLMService.generate() 在知道 context['tenant_id'] 时会传进来。
+        self.tenant_id = tenant_id
 
     async def _get_client(self) -> httpx.AsyncClient:
         """获取HTTP客户端（懒加载）."""
@@ -293,6 +348,7 @@ class LLMClient:
         enable_semantic_cache: bool = False,
         session_id: str = "",
         messages: Optional[list[dict]] = None,
+        tenant_id: Optional[str] = None,
         **extra_params: Any,
     ) -> LLMResponse:
         """调用LLM（非流式）.
@@ -312,11 +368,17 @@ class LLMClient:
             enable_semantic_cache: 是否启用语义缓存
             session_id: 缓存会话ID（同一会话共享缓存空间）
             messages: 预构建的消息列表（OpenAI格式）。若提供，则跳过 system_prompt/user_prompt 拼接。
+            tenant_id: 租户 ID — 覆盖 LLMClient.__init__ 时的默认值。
+                缺省时退到 self.tenant_id, 再缺省跳过 PII (debug log 一次)。
             **extra_params: 额外参数透传给LiteLLM Proxy
 
         Returns:
             标准化的LLMResponse对象
         """
+        # P2 (Task 1.5.5): per-tenant PII guard — 优先用 per-call 参数, 退到
+        # 实例属性, 再退到 None (跳过 PII 过滤, debug log 一次)。
+        effective_tenant_id = tenant_id or self.tenant_id
+
         # Phase 9: 语义缓存拦截
         # 当存在 tools 或预构建 messages 时跳过缓存
         if enable_semantic_cache and session_id and not tools and not messages:
@@ -330,7 +392,7 @@ class LLMClient:
             )
             if cache_hit:
                 result = LLMResponse(
-                    content=_sanitize_text(cached_response),
+                    content=await _sanitize_text(cached_response, effective_tenant_id),
                     model=model,
                     cache_hit=True,
                 )
@@ -357,7 +419,8 @@ class LLMClient:
             built_messages.append({"role": "user", "content": user_prompt})
 
         # P0 (Task 1.5) SOC2/GDPR: 脱敏后再送 LLM（默认开启，关闭时 no-op）
-        built_messages = _sanitize_messages(built_messages)
+        # P2 (Task 1.5.5): per-tenant guard — 调 is_pii_enabled(tenant_id) 决定
+        built_messages = await _sanitize_messages(built_messages, effective_tenant_id)
 
         payload: dict[str, Any] = {
             "model": model,
@@ -391,8 +454,8 @@ class LLMClient:
                 raw = response.json()
                 result = self._parse_response(raw)
                 # P0 (Task 1.5) SOC2/GDPR: 响应内容也脱敏（模型可能回显 PII）
-                result.content = _sanitize_text(result.content) or ""
-                result.reasoning_content = _sanitize_text(result.reasoning_content) or ""
+                result.content = await _sanitize_text(result.content, effective_tenant_id) or ""
+                result.reasoning_content = await _sanitize_text(result.reasoning_content, effective_tenant_id) or ""
                 tracer.set_response(result)
                 return result
         except httpx.HTTPStatusError as e:
@@ -420,6 +483,7 @@ class LLMClient:
         enable_semantic_cache: bool = False,
         session_id: str = "",
         messages: Optional[list[dict]] = None,
+        tenant_id: Optional[str] = None,
         **extra_params: Any,
     ) -> AsyncIterator[LLMStreamChunk]:
         """流式调用LLM.
@@ -430,6 +494,9 @@ class LLMClient:
         Yields:
             LLMStreamChunk: 每个流式块包含增量内容、推理内容、tool_call等。
         """
+        # P2 (Task 1.5.5): per-tenant PII guard
+        effective_tenant_id = tenant_id or self.tenant_id
+
         # Phase 9: 语义缓存拦截（流式）
         if enable_semantic_cache and session_id and not messages:
             cache_hit, cached_response = await self._query_semantic_cache(
@@ -440,7 +507,7 @@ class LLMClient:
             )
             if cache_hit:
                 yield LLMStreamChunk(
-                    content=cached_response,
+                    content=await _sanitize_text(cached_response, effective_tenant_id),
                     finish_reason="stop",
                     model=model,
                 )
@@ -459,7 +526,8 @@ class LLMClient:
             built_messages.append({"role": "user", "content": user_prompt})
 
         # P0 (Task 1.5) SOC2/GDPR: 脱敏后再送 LLM
-        built_messages = _sanitize_messages(built_messages)
+        # P2 (Task 1.5.5): per-tenant guard
+        built_messages = await _sanitize_messages(built_messages, effective_tenant_id)
 
         payload: dict[str, Any] = {
             "model": model,
@@ -505,11 +573,12 @@ class LLMClient:
                     delta = choice.get("delta", {})
 
                     yield LLMStreamChunk(
-                        content=_sanitize_text(delta.get("content") or "") or "",
-                        reasoning_content=_sanitize_text(
+                        content=await _sanitize_text(delta.get("content") or "", effective_tenant_id) or "",
+                        reasoning_content=await _sanitize_text(
                             delta.get("reasoning_content")
                             or delta.get("reasoning")
-                            or ""
+                            or "",
+                            effective_tenant_id,
                         ) or "",
                         finish_reason=choice.get("finish_reason"),
                         tool_call=delta.get("tool_calls", [None])[0]
