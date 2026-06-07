@@ -390,7 +390,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: ${DOCKER_BUILD_TARGET:-development}
+      # 默认 production — 漏一个 env var 也不会跑出 dev image (--reload, dev deps, 源码挂载)
+      # 显式覆盖 (开发用): DOCKER_BUILD_TARGET=development bash scripts/deploy.sh --layer backend
+      target: ${DOCKER_BUILD_TARGET:-production}
       args:
         USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     container_name: nexus-api
@@ -498,7 +500,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: ${DOCKER_BUILD_TARGET:-development}
+      # 默认 production — 漏一个 env var 也不会跑出 dev image (--reload, dev deps, 源码挂载)
+      # 显式覆盖 (开发用): DOCKER_BUILD_TARGET=development bash scripts/deploy.sh --layer backend
+      target: ${DOCKER_BUILD_TARGET:-production}
       args:
         USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     restart: unless-stopped

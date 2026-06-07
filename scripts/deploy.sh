@@ -39,6 +39,8 @@ MIGRATE=false
 VERIFY=false
 NO_CN_MIRROR=false
 COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
+# 默认 production image — 防止漏一个 env var 跑出 dev (--reload)
+export DOCKER_BUILD_TARGET="${DOCKER_BUILD_TARGET:-production}"
 
 # 变更检测结果
 INFRA_CHANGED=false

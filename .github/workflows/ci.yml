@@ -196,3 +196,17 @@ jobs:
 
       - name: Build UI image
         run: docker build --build-arg USE_CN_MIRROR=false -t nexus-ui:ci ./nexus-ui
+
+      - name: Verify production image has no --reload
+        run: |
+          echo "Building production image to verify..."
+          docker build --target production --build-arg USE_CN_MIRROR=false -t nexus-prod-check .
+          # Get the CMD; fail if --reload is present
+          CMD=$(docker inspect nexus-prod-check --format '{{.Config.Cmd}}')
+          echo "Production image CMD: $CMD"
+          if echo "$CMD" | grep -q -- "--reload"; then
+            echo "FATAL: production image contains --reload flag"
+            echo "The dev image is being shipped as production!"
+            exit 1
+          fi
+          echo "OK: production image has no --reload flag"
