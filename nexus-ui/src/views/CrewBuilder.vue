@@ -223,9 +223,9 @@ async function fetchCrew() {
     const resp = await api.get(`/crews/${crewId.value}`)
     form.name = resp.data.name
     form.description = resp.data.description
-    form.mode = data.mode
-    form.config = { ...form.config, ...data.config }
-    form.agent_ids = data.agents?.map((a: any) => ({
+    form.mode = resp.data.mode
+    form.config = { ...form.config, ...resp.data.config }
+    form.agent_ids = resp.data.agents?.map((a: any) => ({
       agent_id: a.id,
       role_in_crew: a.role_in_crew,
       order_index: a.order_index,
@@ -260,7 +260,7 @@ async function saveCrew() {
     } else {
       const resp = await api.post('/crews', payload)
       message.success('Crew 已创建')
-      router.push(`/crews/${data.id}/edit`)
+      router.push(`/crews/${resp.data.id}/edit`)
     }
   } catch (e: any) {
     message.error(e.response?.data?.detail || '保存失败')
@@ -280,7 +280,7 @@ async function testRun() {
     const resp = await api.post(`/crews/${crewId.value}/run`, {
       task_description: testTask.value,
     })
-    testResult.value = data
+    testResult.value = resp.data
     message.success('测试执行完成')
   } catch (e: any) {
     message.error(e.response?.data?.detail || '执行失败')

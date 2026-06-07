@@ -125,7 +125,7 @@ async function runCrew() {
     })
     message.success('Crew 执行完成')
     runModalOpen.value = false
-    console.log('Crew run result:', data)
+    console.log('Crew run result:', resp.data)
   } catch (e: any) {
     message.error(e.response?.data?.detail || '执行失败')
   } finally {
