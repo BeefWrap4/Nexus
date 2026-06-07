@@ -117,6 +117,7 @@ import { ref, computed } from 'vue'
 import { message } from 'ant-design-vue'
 import { RocketOutlined, PlayCircleOutlined } from '@ant-design/icons-vue'
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
+import { autoApi } from '@/api'
 
 interface Subtask {
   id: string; name: string; description: string
@@ -151,16 +152,8 @@ async function submitGoal() {
   goal.value = ''
 
   try {
-    const token = localStorage.getItem('nexus_token') || 'nexus_devkey_api_key_for_testing_and_docs'
-    const resp = await fetch('/api/v1/auto/plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': token },
-      body: JSON.stringify({ goal: text }),
-    })
-
-    if (!resp.ok) throw new Error(`API error: ${resp.status}`)
-
-    const data = await resp.json()
+    const resp = await autoApi.plan({ goal: text })
+    const data = resp.data
     lastResult.value = data
 
     const summary = [
@@ -185,14 +178,8 @@ async function executeWorkflow() {
 
   executing.value = true
   try {
-    const token = localStorage.getItem('nexus_token') || 'nexus_devkey_api_key_for_testing_and_docs'
-    const resp = await fetch('/api/v1/auto/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': token },
-      body: JSON.stringify({ goal: text }),
-    })
-
-    const data = await resp.json()
+    const resp = await autoApi.execute({ goal: text })
+    const data = resp.data
     if (data.success) {
       message.success(`Workflow executing! Run ID: ${data.run_id?.slice(0, 8)}...`)
       messages.value.push({ role: 'assistant', content: `Execution started: workflow=${data.workflow_id?.slice(0, 8)}..., run=${data.run_id?.slice(0, 8)}...` })

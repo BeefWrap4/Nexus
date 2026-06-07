@@ -175,6 +175,15 @@ export const mcpApi = {
     api.post(`/mcp/connections/${name}/tools/${toolName}`, payload),
 }
 
+// ==================== Auto Agent API ====================
+// Fix (frontend Bug): ChatView.vue previously used raw fetch + hardcoded dev key
+// (nexus_devkey_api_key_for_testing_and_docs) — client bundle leaks the dev key
+// to all visitors. Switch to axios interceptor (token auto-injected, 401 auto-refreshed).
+export const autoApi = {
+  plan: (payload: any) => api.post('/auto/plan', payload),
+  execute: (payload: any) => api.post('/auto/execute', payload),
+}
+
 // ==================== Analytics API ====================
 export const analyticsApi = {
   getDashboard: () => api.get('/analytics/dashboard'),
