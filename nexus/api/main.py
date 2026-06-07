@@ -170,6 +170,75 @@ async def _ensure_dev_api_key() -> None:
         logger.info("Created dev API key record in database (prefix=%s)", key_prefix)
 
 
+async def _verify_db_role_not_superuser() -> None:
+    """P0 (Task 1.4) RLS 启动守卫.
+
+    查询 PostgreSQL 当前连接的 role + is_superuser。如果 role 是 superuser，
+    则该 role 隐式 BYPASSRLS — 即使 RLS migration 已经创建了 FORCE ROW LEVEL
+    SECURITY 策略，superuser 连接也会绕过所有 RLS 过滤。app.tenant_id GUC 注入
+    也变成 theater。
+
+    行为:
+    - 生产环境 (ENVIRONMENT=production): 发现 superuser → 抛 RuntimeError，
+      进程退出，uvicorn 不会开始接受请求。
+    - 非生产环境: 发出醒目的 WARNING，但不阻塞（开发体验优先）。
+
+    这个守卫是 defense-in-depth 的最后一道闸 — 即使操作员忘了改 docker-compose
+    的 DATABASE_URL 也没关系，启动时会立刻 fail-fast。
+
+    SQLite 不调用此函数（main.py lifespan 里前置判断）。
+    """
+    import logging
+
+    from sqlalchemy import text as _text
+
+    from nexus.db.database import engine
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                _text(
+                    "SELECT current_user, session_user, "
+                    "current_setting('is_superuser') AS is_super"
+                )
+            )
+            result = row.first()
+    except Exception as exc:  # noqa: BLE001
+        # 连接失败不一定是 role 问题（可能是 DB 还没起来）— 重新抛出原异常。
+        raise RuntimeError(
+            f"RLS startup guard failed: cannot query database role. {exc}"
+        ) from exc
+
+    if result is None:
+        raise RuntimeError(
+            "RLS startup guard failed: current_user / is_superuser query returned no row."
+        )
+
+    current_user, session_user, is_super = result[0], result[1], result[2]
+
+    if is_super == "on":
+        msg = (
+            f"FATAL: database role '{current_user}' is a superuser — RLS is BYPASSED. "
+            f"Switch DATABASE_URL to the non-superuser 'nexus_app' role created by "
+            f"migration add_row_level_security.py (NOSUPERUSER NOBYPASSRLS). "
+            f"See docker-compose.yml for the correct default."
+        )
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(msg)
+        # Dev/test: 警告 + 显式标记，让操作员在日志里就能看到。
+        logger.warning("rls_guard_bypassed role=%s (DEV ENVIRONMENT)", current_user)
+        logger.warning(msg)
+    else:
+        logger.info(
+            "rls_guard_ok role=%s session_user=%s is_superuser=%s",
+            current_user,
+            session_user,
+            is_super,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理.
@@ -190,6 +259,15 @@ async def lifespan(app: FastAPI):
     tracer = setup_tracing()
     if tracer:
         app.state.tracer = tracer
+
+    # P0 (Task 1.4): RLS startup guard
+    # 验证连接的数据库角色不是 superuser，否则 RLS 被 BYPASSRLS 旁路
+    # (即使 FORCE ROW LEVEL SECURITY 也救不了 — superuser 总是 bypass)。
+    # 必须在 init_db() 之后运行（engine 已建好），在 yield 之前运行（启动失败抛错，
+    # uvicorn 不会开始接受请求）。
+    # SQLite 没角色概念，所以跳过（dev 默认 SQLite 时不阻塞）。
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        await _verify_db_role_not_superuser()
 
     # 应用启动时自动运行安全校验（所有环境）
     # 生产环境执行完整校验，开发/测试环境仅执行基础校验

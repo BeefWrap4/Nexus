@@ -1,6 +1,7 @@
 """Alembic迁移环境配置."""
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -17,8 +18,14 @@ import nexus.models  # noqa: F401
 # this is the Alembic Config object
 config = context.config
 
-# 设置数据库URL
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# P0 (Task 1.4): 引导式迁移支持 — 第一次部署需要在 nexus superuser 下
+# 运行 migration (因为 CREATE ROLE 需要 CREATEROLE 权限, nexus_app 没有)。
+# 日常 alembic upgrade head 在 app 容器内执行, 此时 DATABASE_URL 已指向
+# nexus_app — 后续迁移都是 schema 变更, 走 nexus superuser 通道不必要。
+# 解决方案: 优先读 MIGRATION_DATABASE_URL, 缺省才用 settings.DATABASE_URL。
+# 操作员只需在第一次部署时设 MIGRATION_DATABASE_URL, 后续保持空即可。
+_migration_url = os.environ.get("MIGRATION_DATABASE_URL") or settings.DATABASE_URL
+config.set_main_option("sqlalchemy.url", _migration_url)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

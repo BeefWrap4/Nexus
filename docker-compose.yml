@@ -404,8 +404,17 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
       # 数据库
+      # P0 (Task 1.4): 默认用 nexus_app (非 superuser) — superuser 隐式 BYPASSRLS,
+      # 即使 FORCE ROW LEVEL SECURITY 也会被旁路。必须用 migration 创建的
+      # nexus_app 角色 (NOSUPERUSER NOBYPASSRLS) 才能让 RLS 真正生效。
+      # 密码来自 NEXUS_APP_DB_PASSWORD（与 migration add_row_level_security.py 一致）。
       # DATABASE_URL: 直连 postgres (默认) 或通过 pgbouncer (启动 pgbouncer profile 后改成 @pgbouncer:6432)
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}}
+      NEXUS_APP_DB_PASSWORD: ${NEXUS_APP_DB_PASSWORD:-nexus_app_password}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nexus_app:${NEXUS_APP_DB_PASSWORD:-nexus_app_password}@postgres:5432/${POSTGRES_DB:-nexus}}
+      # 首次部署: migration 需要 superuser 创建 nexus_app 角色 (CREATE ROLE 需要
+      # CREATEROLE 权限)。设 MIGRATION_DATABASE_URL 走 superuser 一次即可,
+      # 后续保持空 — alembic env.py 会在 MIGRATION_DATABASE_URL 缺省时用 DATABASE_URL。
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
       DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
       DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
@@ -498,8 +507,12 @@ services:
       DEBUG: ${DEBUG:-false}
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # P0 (Task 1.4): 与 api 一致 — 默认连 nexus_app 角色 (NOSUPERUSER NOBYPASSRLS)。
+      # superuser 连接会让 RLS 形同虚设。
+      NEXUS_APP_DB_PASSWORD: ${NEXUS_APP_DB_PASSWORD:-nexus_app_password}
       # DATABASE_URL: 直连 postgres (默认) 或通过 pgbouncer (启动 pgbouncer profile 后改成 @pgbouncer:6432)
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://nexus_app:${NEXUS_APP_DB_PASSWORD:-nexus_app_password}@postgres:5432/${POSTGRES_DB:-nexus}}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
       DATABASE_ECHO: ${DATABASE_ECHO:-false}
       # Redis (P2高可用架构 - 哨兵模式)
       REDIS_SENTINEL_HOSTS: ${REDIS_SENTINEL_HOSTS:-nexus-redis-sentinel-1:26379,nexus-redis-sentinel-2:26379,nexus-redis-sentinel-3:26379}

@@ -59,6 +59,24 @@ APP_DB_PASSWORD = os.environ.get("NEXUS_APP_DB_PASSWORD", "TEMP_PLACEHOLDER_CHAN
 
 def upgrade() -> None:
     """1) 创建 nexus_app 角色（不 BYPASSRLS）; 2) 启用 RLS + 策略."""
+    import logging
+
+    logger = logging.getLogger("alembic.env.rls")
+
+    if APP_DB_PASSWORD == "TEMP_PLACEHOLDER_CHANGE_ME":
+        logger.warning(
+            "NEXUS_APP_DB_PASSWORD is not set — using temporary placeholder. "
+            "Production must set this in .env / docker-compose to a strong value. "
+            "The placeholder only works for local dev; first migration run "
+            "must also set MIGRATION_DATABASE_URL to the superuser URL so this "
+            "migration can CREATE ROLE (nexus_app lacks CREATEROLE privilege)."
+        )
+    else:
+        logger.info(
+            "Using NEXUS_APP_DB_PASSWORD (length=%d) for nexus_app role.",
+            len(APP_DB_PASSWORD),
+        )
+
     # Step 1: 创建应用角色
     op.execute(f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='nexus_app') THEN CREATE ROLE nexus_app LOGIN PASSWORD '{APP_DB_PASSWORD}' NOSUPERUSER NOBYPASSRLS; END IF; END $$;")
 
