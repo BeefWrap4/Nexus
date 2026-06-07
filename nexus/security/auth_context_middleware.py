@@ -17,20 +17,17 @@ P0 修复: review 发现 audit_middleware / RBAC / get_tenant_db 都读
 ``get_current_user`` 依赖在 endpoint 调用时抛 (它有 DB 访问权)。
 
 注册顺序 (main.py):
-- 这是个普通 ``@app.middleware("http")`` 装饰的函数, 注册到 app 上
-  后会成为整个 stack 的**最内层** (靠近 endpoint) — 也就是说它在
-  audit_middleware 之后才跑。但 audit_middleware 也是 ``@app.middleware("http")``,
-  后注册的内层, 先注册的在外层。所以:
+- ``@app.middleware("http")`` 注册的 middleware 在 Starlette 里是**反向入栈**:
+  最后注册的变成最外层, 第一个跑。本文件被注册为**最外层** (最后注册),
+  所以在 audit_middleware 之前运行 — 让 audit 看到 ``request.state.user``。
 
-    注册顺序: auth_context (先) → audit (后)
-    实际运行顺序: audit (外层) → auth_context (内层)
+  实际运行顺序 (最外 → 最内):
+    anonymous_rate_limit → CORS → Prometheus → RBAC → AuditLog
+    → auth_context_middleware (本文件) → endpoint
 
-  这**不**是我们想要的。我们想要 auth_context 跑在最外层 (在 audit 之前
-  设置好 user, 让 audit 看得到)。
-
-修复方式: 在 main.py 里把 auth_context 装饰**最后**注册, 这样它在外层
-运行 (Starlette 的 middleware 栈是反向入栈)。本文件不直接 import main.py,
-调用方按注释的顺序注册。
+修复方式: 在 main.py 里把 auth_context **最后**注册, 这样它在最外层
+(在 AuditLog 之前) 跑。本文件不直接 import main.py, 调用方按
+注释的顺序注册。
 
 策略:
 - Authorization: Bearer <jwt>    → jwt.decode 不查 DB
