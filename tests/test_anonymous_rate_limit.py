@@ -61,7 +61,7 @@ def test_anonymous_request_above_limit_returns_429():
     )
 
     with patch(
-        "nexus.security.anonymous_rate_limit._get_rate_limiter",
+        "nexus.security.anonymous_rate_limit.get_rate_limiter_from_request",
         return_value=limiter_mock,
     ):
         from nexus.api.main import app
@@ -90,7 +90,7 @@ def test_health_endpoint_also_rate_limited():
     )
 
     with patch(
-        "nexus.security.anonymous_rate_limit._get_rate_limiter",
+        "nexus.security.anonymous_rate_limit.get_rate_limiter_from_request",
         return_value=limiter_mock,
     ):
         from nexus.api.main import app
@@ -122,7 +122,7 @@ def test_different_ips_have_independent_buckets():
     limiter_mock.check_rate_limit = _capture
 
     with patch(
-        "nexus.security.anonymous_rate_limit._get_rate_limiter",
+        "nexus.security.anonymous_rate_limit.get_rate_limiter_from_request",
         return_value=limiter_mock,
     ):
         from nexus.api.main import app
@@ -159,7 +159,7 @@ def test_middleware_uses_x_forwarded_for_first_hop():
     limiter_mock.check_rate_limit = _capture
 
     with patch(
-        "nexus.security.anonymous_rate_limit._get_rate_limiter",
+        "nexus.security.anonymous_rate_limit.get_rate_limiter_from_request",
         return_value=limiter_mock,
     ):
         from nexus.api.main import app

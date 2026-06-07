@@ -300,6 +300,11 @@ async def lifespan(app: FastAPI):
         redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     app.state.redis = redis_client
 
+    # P2 修复: 把 RateLimiter 提到 lifespan 初始化, 挂到 app.state,
+    # 避免 anonymous_rate_limit_middleware 在请求里反向 import main (循环).
+    from nexus.security.rate_limiter import RateLimiter
+    app.state.rate_limiter = RateLimiter(redis_client)
+
     # EventBus（带 Redis，用于跨进程通信）
     event_bus = EventBus(redis_client=redis_client)
     app.state.event_bus = event_bus

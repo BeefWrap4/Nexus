@@ -27,22 +27,15 @@ from nexus.security.rate_limiter import RateLimiter
 logger = logging.getLogger(__name__)
 
 
-def _get_rate_limiter() -> Optional[RateLimiter]:
-    """Lazily build a RateLimiter from the app's redis client.
+def get_rate_limiter_from_request(request: Request) -> Optional[RateLimiter]:
+    """Read the pre-initialized RateLimiter from app.state.
 
-    The redis client is attached to app.state.redis during the FastAPI
-    lifespan. The middleware runs inside a request, so the app is
-    already up by the time we are called. We return None if redis is
-    missing — the caller treats None as "fail open".
+    P2 修复: 之前 _get_rate_limiter() 在函数体里 from-import main.app,
+    构成循环引用 (main.py 启动时 import chain 会被这个反过来追到本模块).
+    现在 lifespan 启动期就构造好 limiter 挂在 app.state.rate_limiter,
+    middleware 直接取 — 零循环 import。
     """
-    # Imported lazily so this module is importable before app.state
-    # exists (e.g. during unit-test module collection).
-    from nexus.api.main import app  # noqa: PLC0415
-
-    redis_client = getattr(app.state, "redis", None)
-    if redis_client is None:
-        return None
-    return RateLimiter(redis_client)
+    return getattr(request.app.state, "rate_limiter", None)
 
 
 async def anonymous_rate_limit_middleware(request: Request, call_next) -> Response:
@@ -50,7 +43,7 @@ async def anonymous_rate_limit_middleware(request: Request, call_next) -> Respon
     if not settings.ANONYMOUS_RATE_LIMIT_ENABLED:
         return await call_next(request)
 
-    limiter = _get_rate_limiter()
+    limiter = get_rate_limiter_from_request(request)
     if limiter is None:
         # No redis client — fail open.
         return await call_next(request)
