@@ -24,6 +24,7 @@ from nexus.engine.event_bus import EventBus
 from nexus.exceptions import NexusException
 from nexus.jobs.pool import close_arq_pool, init_arq_pool
 from nexus.security.rbac import RBACMiddleware
+from nexus.security.audit_middleware import audit_log_middleware
 
 
 def _validate_production_security() -> None:
@@ -431,6 +432,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# P0 (Task 1.5) SOC2/GDPR: 审计日志中间件
+# 必须放最内层（最后 add → 最先 dispatch），紧贴 endpoint，确保能看到 RBAC
+# 通过后的 request.state.user（认证失败的不写审计，避免噪声）。
+# 顺序（自外向内）: CORS → Prometheus → RBAC → AuditLog → endpoint
+app.middleware("http")(audit_log_middleware)
 
 
 # 全局异常处理

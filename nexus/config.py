@@ -222,6 +222,10 @@ class Settings(BaseSettings):
     # 审计
     # ------------------------------------------------------------------
     AUDIT_LOG_RETENTION_DAYS: int = 90
+    # P0 (Task 1.5) SOC2/GDPR 真实集成: 总开关，关闭后 PIIGuard 与
+    # audit_middleware 都不写日志 / 不脱敏（默认开启以满足合规要求）。
+    PII_ENABLED: bool = Field(default=True, validation_alias="PII_ENABLED")
+    AUDIT_ENABLED: bool = Field(default=True, validation_alias="AUDIT_ENABLED")
 
     # ------------------------------------------------------------------
     # RAG / Smart Cache 集成

@@ -19,6 +19,32 @@ import httpx
 from nexus.config import settings
 from nexus.exceptions import LLMCallException
 
+# P0 (Task 1.5) SOC2/GDPR: 在 LLM 入口/出口对 PII 进行脱敏。
+# 仅在 settings.PII_ENABLED=True 时生效。PIIGuard.sanitize() 接受 str/dict/list
+# 递归处理，可直接套到 messages 列表（OpenAI 格式）。
+_pii_guard = None
+if settings.PII_ENABLED:
+    try:
+        from nexus.security.pii_guard import PIIGuard
+        _pii_guard = PIIGuard()
+    except Exception:  # noqa: BLE001
+        # PII 加载失败不阻塞 LLM 调用 — 静默降级，记录在 module import 时。
+        _pii_guard = None
+
+
+def _sanitize_messages(messages):
+    """对 OpenAI 格式 messages 列表做 PII 脱敏（关闭时原样返回）."""
+    if _pii_guard is None or not messages:
+        return messages
+    return _pii_guard.sanitize(messages)
+
+
+def _sanitize_text(text):
+    """对单段文本做 PII 脱敏（关闭时原样返回）."""
+    if _pii_guard is None or not text:
+        return text
+    return _pii_guard.sanitize(text)
+
 
 @dataclass
 class LLMResponse:
@@ -290,7 +316,7 @@ class LLMClient:
             )
             if cache_hit:
                 result = LLMResponse(
-                    content=cached_response,
+                    content=_sanitize_text(cached_response),
                     model=model,
                     cache_hit=True,
                 )
@@ -315,6 +341,9 @@ class LLMClient:
             if system_prompt:
                 built_messages.append({"role": "system", "content": system_prompt})
             built_messages.append({"role": "user", "content": user_prompt})
+
+        # P0 (Task 1.5) SOC2/GDPR: 脱敏后再送 LLM（默认开启，关闭时 no-op）
+        built_messages = _sanitize_messages(built_messages)
 
         payload: dict[str, Any] = {
             "model": model,
@@ -347,6 +376,9 @@ class LLMClient:
                 response.raise_for_status()
                 raw = response.json()
                 result = self._parse_response(raw)
+                # P0 (Task 1.5) SOC2/GDPR: 响应内容也脱敏（模型可能回显 PII）
+                result.content = _sanitize_text(result.content) or ""
+                result.reasoning_content = _sanitize_text(result.reasoning_content) or ""
                 tracer.set_response(result)
                 return result
         except httpx.HTTPStatusError as e:
@@ -412,6 +444,9 @@ class LLMClient:
                 built_messages.append({"role": "system", "content": system_prompt})
             built_messages.append({"role": "user", "content": user_prompt})
 
+        # P0 (Task 1.5) SOC2/GDPR: 脱敏后再送 LLM
+        built_messages = _sanitize_messages(built_messages)
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": built_messages,
@@ -456,10 +491,12 @@ class LLMClient:
                     delta = choice.get("delta", {})
 
                     yield LLMStreamChunk(
-                        content=delta.get("content") or "",
-                        reasoning_content=delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or "",
+                        content=_sanitize_text(delta.get("content") or "") or "",
+                        reasoning_content=_sanitize_text(
+                            delta.get("reasoning_content")
+                            or delta.get("reasoning")
+                            or ""
+                        ) or "",
                         finish_reason=choice.get("finish_reason"),
                         tool_call=delta.get("tool_calls", [None])[0]
                         if delta.get("tool_calls")
