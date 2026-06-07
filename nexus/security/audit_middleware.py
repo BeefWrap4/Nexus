@@ -58,6 +58,9 @@ def _parse_resource_id(path: str) -> Optional[str]:
     """从 path 提取 resource id: /api/v1/workflows/abc/edit → abc.
 
     取第一个看起来像 UUID / 短字符串 token 的 segment。
+    返回 None 表示这是 collection-level endpoint（无具体 row id），
+    调用方应将 None 写入 audit_logs.resource_id (P2 fix: 原来是写
+    UUID(int=0) 占位符，污染 per-resource 查询)。
     """
     parts = [p for p in path.split("/") if p and p not in ("api", "v1")]
     if len(parts) < 2:
@@ -148,12 +151,15 @@ async def audit_log_middleware(request: Request, call_next) -> Response:
             return response
 
         resource_id_str = _parse_resource_id(request.url.path)
-        resource_id: UUID
-        try:
-            resource_id = UUID(resource_id_str) if resource_id_str else UUID(int=0)
-        except (ValueError, TypeError):
-            # 非 UUID resource id — 用占位 UUID（保留 type 与 action 记录）
-            resource_id = UUID(int=0)
+        resource_id: Optional[UUID]
+        if resource_id_str:
+            try:
+                resource_id = UUID(resource_id_str)
+            except (ValueError, TypeError):
+                # 非 UUID resource id — 记录为 None（保留 type 与 action 记录）
+                resource_id = None
+        else:
+            resource_id = None
 
         async with AsyncSessionLocal() as session:
             session.add(

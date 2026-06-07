@@ -35,7 +35,7 @@ class AuditLog(Base):
     resource_type = Column(
         String(50), nullable=False
     )  # workflow / agent / tool / run / hitl_task
-    resource_id = Column(UUIDVariant, nullable=False)
+    resource_id = Column(UUIDVariant, nullable=True)  # Was False; nullable for non-UUID paths (P2 fix)
     action = Column(
         String(50), nullable=False
     )  # create / update / delete / execute / approve
