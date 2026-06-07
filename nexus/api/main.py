@@ -26,6 +26,7 @@ from nexus.jobs.pool import close_arq_pool, init_arq_pool
 from nexus.security.rbac import RBACMiddleware
 from nexus.security.audit_middleware import audit_log_middleware
 from nexus.security.auth_context_middleware import auth_context_middleware
+from nexus.security.anonymous_rate_limit import anonymous_rate_limit_middleware
 
 
 def _validate_production_security() -> None:
@@ -447,6 +448,17 @@ app.middleware("http")(audit_log_middleware)
 # 顺序（自外向内）: CORS → Prometheus → RBAC → AuditLog → auth_context → endpoint
 # 也就是: 请求进来 → auth_context 先跑 (设 user) → 走到 audit 时 user 已有值。
 app.middleware("http")(auth_context_middleware)
+
+# P0 fix (Task 1.6): Anonymous DoS rate limit (pre-auth).
+# 之前 RateLimiter 只在 get_current_user 里跑，攻击者用 bogus token /
+# bogus API key 洪泛 /api/v1/* 就能跳过限流，bottleneck 在 bcrypt/JWT
+# verify。/health、/metrics、/docs 更是完全无界。这条注册为最后一条
+# app.middleware = 反向入栈最外层 = 请求进来第一个跑的中间件，KEY
+# 是 client IP，FAIL-OPEN（Redis 挂时放行避免全站 5xx），200 req/min/IP
+# 默认值。/health、/metrics 也限流（公网可被未授权访问，必须限）。
+# 顺序（自外向内）: anon_rate_limit → CORS → Prometheus → RBAC →
+#                   AuditLog → auth_context → endpoint
+app.middleware("http")(anonymous_rate_limit_middleware)
 
 
 # 全局异常处理

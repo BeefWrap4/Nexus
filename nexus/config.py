@@ -228,6 +228,21 @@ class Settings(BaseSettings):
     AUDIT_ENABLED: bool = Field(default=True, validation_alias="AUDIT_ENABLED")
 
     # ------------------------------------------------------------------
+    # DoS 防护（P0 Task 1.6）
+    # ------------------------------------------------------------------
+    # 攻击者可以洪泛 /api/v1/* 带 bogus token，消耗 bcrypt/JWT 验签；
+    # /health、/metrics、/docs 等公开路径也完全无界。RateLimiter 此前
+    # 只在 get_current_user 之后跑，攻击者跳过这条。anonymous_rate_limit
+    # 中间件在 auth 之前基于 client IP 限流（fail-open：Redis 挂时放行
+    # 避免 5xx 全站宕）。默认 200 req/min/IP，生产环境可调高。
+    ANONYMOUS_RATE_LIMIT_ENABLED: bool = Field(
+        default=True, validation_alias="ANONYMOUS_RATE_LIMIT_ENABLED"
+    )
+    ANONYMOUS_RATE_LIMIT_PER_MINUTE: int = Field(
+        default=200, validation_alias="ANONYMOUS_RATE_LIMIT_PER_MINUTE"
+    )
+
+    # ------------------------------------------------------------------
     # RAG / Smart Cache 集成
     # ------------------------------------------------------------------
     SMART_CACHE_URL: str = Field(
