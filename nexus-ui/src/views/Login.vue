@@ -13,6 +13,12 @@
             登录
           </a-button>
         </a-form-item>
+        <a-typography-text type="secondary" style="display: block; text-align: center; margin-top: 12px">
+          还没有账号？
+          <a-typography-link @click="$router.push('/register')">
+            立即注册
+          </a-typography-link>
+        </a-typography-text>
       </a-form>
     </a-card>
   </div>

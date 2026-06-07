@@ -4,13 +4,16 @@
 """
 
 import logging
+import re
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nexus.db.database import get_db
@@ -42,6 +45,19 @@ class RegisterRequest(BaseModel):
     password: str
     name: Optional[str] = None
     tenant_slug: str = "default"
+
+
+class SignupRequest(BaseModel):
+    """Self-service signup request model.
+
+    Unlike /register (which requires a pre-existing tenant), /signup creates
+    both a Tenant and the requesting admin User in a single call. New
+    customers can onboard in under 5 minutes.
+    """
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    tenant_name: str = Field(min_length=2, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
 
 
 @router.post("/login", summary="用户登录")
@@ -323,5 +339,145 @@ async def register(
             "name": new_user.name,
             "role": new_user.role,
             "tenant_id": str(new_user.tenant_id),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Self-service signup — creates Tenant + admin User in one call
+# ---------------------------------------------------------------------------
+
+
+def _slugify(name: str) -> str:
+    """Convert a tenant name to a URL-safe slug.
+
+    Lowercase, replace non-alphanumeric runs with '-', trim, cap at 50 chars.
+    Falls back to ``"tenant"`` when the name has no usable characters.
+    """
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", name.lower()).strip("-")
+    return s[:50] or "tenant"
+
+
+@router.post(
+    "/signup",
+    status_code=status.HTTP_201_CREATED,
+    summary="自助注册（创建租户 + 管理员）",
+)
+async def signup(
+    payload: SignupRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Self-service signup — creates a new tenant AND its first admin user
+    in a single call. Returns a JWT so the customer lands in the dashboard
+    without any operator hand-holding.
+
+    Flow:
+        1. Check email is not already taken (across all tenants).
+        2. Create Tenant (plan=free trial, status=active).
+        3. Hash the password with bcrypt.
+        4. Create User with role=admin, is_active=True.
+        5. Commit atomically; on slug collision append a short suffix.
+        6. Issue access token (15 min) and return the user payload.
+
+    Differs from ``/register``:
+        - /register: requires pre-existing tenant_slug, role=member.
+        - /signup:   creates tenant + admin, intended for new customers.
+
+    Raises:
+        HTTPException(409): Email already registered.
+        HTTPException(409): Slug collision after retry (extremely rare).
+    """
+    email = payload.email.lower().strip()
+
+    # 1. Check email not already taken
+    stmt = select(User).where(User.email == email)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    # 2. Build a unique slug; retry once on collision
+    base_slug = _slugify(payload.tenant_name)
+    slug = base_slug
+    for attempt in range(2):
+        stmt = select(Tenant).where(Tenant.slug == slug)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            break
+        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Could not allocate a unique tenant slug for '{payload.tenant_name}'",
+        )
+
+    # 3. Create Tenant
+    tenant = Tenant(
+        id=uuid.uuid4(),
+        name=payload.tenant_name,
+        slug=slug,
+        plan="free",  # default trial plan
+        status="active",
+        config={},
+    )
+    db.add(tenant)
+    await db.flush()  # surface FK / constraint errors before User insert
+
+    # 4. Hash password (bcrypt, same scheme as /register)
+    password_hash = bcrypt.hashpw(
+        payload.password.encode("utf-8"), bcrypt.gensalt()
+    ).decode("utf-8")
+
+    # 5. Create admin user
+    new_user = User(
+        id=uuid.uuid4(),
+        tenant_id=tenant.id,
+        email=email,
+        name=payload.name,
+        role="admin",
+        password_hash=password_hash,
+        is_active=True,
+    )
+    db.add(new_user)
+
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Signup IntegrityError: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    await db.refresh(new_user)
+    await db.refresh(tenant)
+
+    # 6. Issue JWT
+    access_token = AuthService.create_access_token(
+        user_id=str(new_user.id),
+        tenant_id=str(tenant.id),
+        role=new_user.role,
+    )
+    refresh_token = AuthService.create_refresh_token(user_id=str(new_user.id))
+
+    logger.info(
+        f"New tenant + admin created via /signup: "
+        f"tenant_id={tenant.id}, user_id={new_user.id}, email={email}"
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": 900,  # 15 minutes
+        "user": {
+            "id": str(new_user.id),
+            "email": new_user.email,
+            "name": new_user.name,
+            "role": new_user.role,
+            "tenant_id": str(tenant.id),
         },
     }

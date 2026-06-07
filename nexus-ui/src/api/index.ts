@@ -194,6 +194,12 @@ export const analyticsApi = {
 export const authApi = {
   login: (data: { email: string; password: string }) =>
     api.post('/auth/login', data),
+  signup: (data: {
+    email: string
+    password: string
+    tenant_name: string
+    name: string
+  }) => api.post('/auth/signup', data),
   me: () => api.get('/auth/me'),
 }
 

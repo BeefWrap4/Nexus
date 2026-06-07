@@ -12,6 +12,11 @@ const routes = [
     component: () => import('@/views/Login.vue'),
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/Register.vue'),
+  },
+  {
     path: '/',
     component: () => import('@/views/Layout.vue'),
     children: [
@@ -132,11 +137,11 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
-  const publicPaths = ['/login']
+  const publicPaths = ['/login', '/register']
 
   if (!auth.isAuthenticated && !publicPaths.includes(to.path)) {
     next('/login')
-  } else if (auth.isAuthenticated && to.path === '/login') {
+  } else if (auth.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
     next('/dashboard')
   } else {
     next()
