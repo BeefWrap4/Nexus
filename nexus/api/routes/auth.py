@@ -328,7 +328,7 @@ async def register(
         role=new_user.role,
     )
 
-    logger.info(f"New user registered: {email} (id={new_user.id})")
+    logger.info(f"New user registered: {request.email} (id={new_user.id})")
 
     return {
         "access_token": access_token,
