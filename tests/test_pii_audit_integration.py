@@ -96,6 +96,47 @@ def test_pii_guard_disabled_via_config():
         llm_mod._pii_guard = original_guard
 
 
+def test_address_regex_does_not_match_common_chinese_words():
+    """PII guard should not redact single-char CJK words like 市/区/路/号.
+
+    The previous regex \\b(?:省|市|区|县|街道|路|号|室|栋|单元)\\b was a
+    false-positive factory — words adjacent to a space/punctuation boundary
+    (e.g. "请到 5 号" → "请到 5 [ADDRESS_REDACTED]") would partially redact
+    legitimate Chinese text. Real addresses are multi-component; require
+    at least 2 address parts to match (省+市, 市+路+号, or Western style).
+    """
+    from nexus.security.pii_guard import PIIGuard
+
+    guard = PIIGuard()
+
+    # These should NOT be redacted
+    cases_not_redacted = [
+        "我在北京市",         # "I'm in Beijing city"
+        "请到 3 号窗口",      # "Please go to window 3"
+        "这是一条街道",       # "This is a street"
+        "路还很远",          # "The road is still far"
+        "区分为几类",        # "Categorize into several types"
+    ]
+    for text in cases_not_redacted:
+        result = guard.sanitize(text)
+        result_str = str(result)
+        assert "[ADDRESS" not in result_str.upper() and "REDACT" not in result_str.upper(), (
+            f"False positive on common Chinese text: '{text}' → '{result}'"
+        )
+
+    # These SHOULD be redacted (clear addresses with multiple components)
+    cases_redacted = [
+        "我住在北京市朝阳区建国路 88 号",         # district + road + number + 号
+        "上海市浦东新区世纪大道 100 号 5 栋 302 室",  # district + avenue + 号
+    ]
+    for text in cases_redacted:
+        result = guard.sanitize(text)
+        result_str = str(result)
+        assert "[ADDRESS" in result_str.upper() or "REDACT" in result_str.upper(), (
+            f"Should have redacted full address: '{text}' → '{result}'"
+        )
+
+
 # ---------------------------------------------------------------------------
 # 2. LLMClient 集成: 真实调用 PIIGuard
 # ---------------------------------------------------------------------------

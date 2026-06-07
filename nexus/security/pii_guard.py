@@ -38,7 +38,22 @@ class PIIGuard:
         "credit_card": r"\b(?:\d{4}[- ]?){3}\d{4}\b",
         "id_card": r"\b\d{17}[\dXx]|\d{15}\b",  # 中国身份证
         "bank_card": r"\b(?:\d{4}[- ]?){3,4}\d{3,4}\b",
-        "address": r"\b(?:省|市|区|县|街道|路|号|室|栋|单元)\b",
+        # Address detection (Phase 2 will introduce a dedicated AddressDetector
+        # for billing-address use cases). The previous single-char
+        # \\b(?:省|市|区|县|...)\\b pattern was a false-positive factory: it
+        # could match single characters at punctuation boundaries (e.g. "请到
+        # 5 号" → "请到 5 [ADDRESS_REDACTED]") and only ever partially redacted
+        # real addresses. We now require multi-component patterns:
+        #   - Chinese: 省+市, or 市/区/县 + 路/街/道 + 数字 + 号
+        #   - Western: number + capitalized name + street suffix
+        "address": (
+            r"(?:"
+            r"[一-鿿]{2,}(?:省|自治区|特别行政区)\s*[一-鿿]{2,}(?:市|区|县)"
+            r"|[一-鿿]{2,}(?:市|区|县)\s*[一-鿿]{2,}(?:路|街|大道|道)\s*\d+\s*号"
+            r"|\d+\s+[A-Z][A-Za-z]+\.?\s+(?:Street|St|Avenue|Ave|Road|Rd|"
+            r"Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl)\b"
+            r")"
+        ),
     }
 
     def sanitize(self, content: Union[str, dict, list, Any]) -> Any:
