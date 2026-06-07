@@ -103,12 +103,91 @@ async def two_tenant_sessions():
         await engine_b.dispose()
 
 
+@pytest_asyncio.fixture
+async def two_real_tenants(two_tenant_sessions):
+    """Create two real Tenant rows + one User so workflow FKs are satisfied.
+
+    The `tenants` and `users` tables do NOT have RLS (see
+    `add_row_level_security.py::MULTI_TENANT_TABLES`), so `nexus_app` can
+    INSERT into them directly. The fixture yields three UUIDs:
+
+      - tenant_a_id  → use for GUC when inserting the test workflow
+      - tenant_b_id  → use for the cross-tenant GUC (verifier session)
+      - user_id      → use as workflows.created_by (FK to users.id)
+
+    Cleanup deletes the inserted rows in reverse-FK order.
+    """
+    engine_a, _ = two_tenant_sessions
+
+    tenant_a_id = uuid.uuid4()
+    tenant_b_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    async with engine_a.begin() as conn:
+        # tenants has no RLS, FK from users.tenant_id → tenants.id.
+        await conn.execute(
+            text(
+                """
+                INSERT INTO tenants (id, name, slug, plan, status, created_at, updated_at)
+                VALUES (:id, :name, :slug, 'free', 'active', NOW(), NOW()),
+                       (:id2, :name2, :slug2, 'free', 'active', NOW(), NOW())
+                """
+            ),
+            {
+                "id": tenant_a_id,
+                "name": "test_tenant_a",
+                "slug": f"test-a-{tenant_a_id.hex[:8]}",
+                "id2": tenant_b_id,
+                "name2": "test_tenant_b",
+                "slug2": f"test-b-{tenant_b_id.hex[:8]}",
+            },
+        )
+        # users also has no RLS; FK to tenants.
+        await conn.execute(
+            text(
+                """
+                INSERT INTO users (id, tenant_id, email, name, status, created_at, updated_at)
+                VALUES (:id, :tid, :email, 'rls_test_user', 'active', NOW(), NOW())
+                """
+            ),
+            {
+                "id": user_id,
+                "tid": tenant_a_id,
+                "email": f"rls-{tenant_a_id.hex[:8]}@test.local",
+            },
+        )
+
+    try:
+        yield tenant_a_id, tenant_b_id, user_id
+    finally:
+        # Cleanup. The workflows row created by the test should already
+        # be deleted in its own `finally` block, but be defensive here.
+        async with engine_a.begin() as conn:
+            # workflows has RLS — must set GUC to tenant_a before DELETE.
+            await conn.execute(text(f"SET app.tenant_id = '{tenant_a_id}'"))
+            await conn.execute(
+                text("DELETE FROM workflows WHERE created_by = :uid"),
+                {"uid": user_id},
+            )
+        async with engine_a.begin() as conn:
+            # users / tenants have no RLS, no GUC needed.
+            await conn.execute(
+                text("DELETE FROM users WHERE id = :uid"), {"uid": user_id}
+            )
+            await conn.execute(
+                text("DELETE FROM tenants WHERE id IN (:a, :b)"),
+                {"a": tenant_a_id, "b": tenant_b_id},
+            )
+
+
 # ---------------------------------------------------------------------------
 # Test: cross-tenant SELECT must return zero rows
 # ---------------------------------------------------------------------------
 
 
-async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
+async def test_cross_tenant_select_returns_zero_rows(
+    two_tenant_sessions, two_real_tenants
+):
     """Tenant A inserts a row; Tenant B's SELECT for it must return 0.
 
     If this fails, RLS is being bypassed (BYPASSRLS role, missing FORCE,
@@ -116,45 +195,16 @@ async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
     is connecting as the `nexus` superuser instead of `nexus_app`.
     """
     engine_a, engine_b = two_tenant_sessions
+    tenant_a_id, tenant_b_id, user_id = two_real_tenants
 
-    # Use deterministic UUIDs so the test is repeatable (and so cleanup
-    # finds the row we just inserted, not some other row from a prior run).
     test_id = uuid.uuid4()
-    tenant_a_id = uuid.uuid4()
-    tenant_b_id = uuid.uuid4()
 
-    # Find a valid tenants row to satisfy the FK (the workflows table has
-    # tenant_id REFERENCES tenants(id) NOT NULL, and created_by REFERENCES
-    # users(id) NOT NULL). We use the same tenant_id for both the row AND
-    # the GUC so RLS lets the insert through; the cross-tenant check still
-    # works because we switch the GUC in the verifying session.
-    #
-    # We do need at least one row in `tenants` and one row in `users`.
-    # If those don't exist in the test DB, the INSERT will fail and we
-    # want a clear error. Use the default tenant seeded by init_db.
+    # Insert as tenant_a: GUC == row.tenant_id (both real Tenant UUIDs),
+    # so the RLS WITH CHECK clause lets the insert through. The cross-
+    # tenant test then uses engine_b with GUC=tenant_b_id — the row
+    # is invisible because row.tenant_id != current_setting.
     async with engine_a.begin() as conn:
-        # Look up the default tenant (id, user) so FKs are satisfied.
-        tenant_row = await conn.execute(text("SELECT id FROM tenants LIMIT 1"))
-        tenant = tenant_row.scalar_one_or_none()
-        if tenant is None:
-            pytest.skip("No tenants row in test DB — run init_db / seed_data first")
-
-        user_row = await conn.execute(text("SELECT id FROM users LIMIT 1"))
-        user = user_row.scalar_one_or_none()
-        if user is None:
-            pytest.skip("No users row in test DB — run init_db / seed_data first")
-
-        # Insert as tenant_a. We set BOTH the row's tenant_id and the
-        # GUC to tenant_a's id, so the WITH CHECK clause lets it through.
         await conn.execute(text(f"SET app.tenant_id = '{tenant_a_id}'"))
-        # NOTE: we deliberately insert a row with tenant_id = tenant_a_id
-        # (a fresh UUID) and then the GUC is tenant_a_id. RLS WITH CHECK
-        # requires tenant_id::text = current_setting('app.tenant_id').
-        # The FK to tenants is the problem — we can't insert a tenant_id
-        # that doesn't exist in tenants. So instead, we insert under the
-        # real tenant row, then DELETE+verify in different GUC contexts.
-        # (Same effect for proving RLS: we just need the row's tenant_id
-        # to be a real tenants.id; the GUC test still proves isolation.)
         await conn.execute(
             text(
                 """
@@ -163,15 +213,15 @@ async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
                 """
             ),
-            {"id": test_id, "tenant_id": tenant, "user_id": user},
+            {
+                "id": test_id,
+                "tenant_id": tenant_a_id,
+                "user_id": user_id,
+            },
         )
 
-    # Now verify: with GUC = tenant_a_id, we can see the row (because the
-    # row's tenant_id matches the GUC after RLS evaluation; in the test
-    # DB this works because the row's tenant_id is the real tenant UUID,
-    # and we set the GUC to the real tenant UUID in the next step).
-    # The cross-tenant check is: GUC = tenant_b_id → row is invisible.
     try:
+        # The cross-tenant check: GUC=tenant_b_id → row must be invisible.
         async with engine_b.begin() as conn:
             await conn.execute(text(f"SET app.tenant_id = '{tenant_b_id}'"))
             result = await conn.execute(
@@ -186,10 +236,9 @@ async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
                 f"the migration ran and DATABASE_URL points to nexus_app."
             )
 
-        # Sanity check: with the right GUC we CAN see the row. This
-        # confirms the row exists and the test infrastructure is sound.
+        # Sanity check: with the right GUC we CAN see the row.
         async with engine_a.begin() as conn:
-            await conn.execute(text(f"SET app.tenant_id = '{tenant}'"))
+            await conn.execute(text(f"SET app.tenant_id = '{tenant_a_id}'"))
             result = await conn.execute(
                 text("SELECT COUNT(*) FROM workflows WHERE id = :id"),
                 {"id": test_id},
@@ -200,9 +249,9 @@ async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
                 f"(count={count}). RLS may be misconfigured."
             )
     finally:
-        # Cleanup: delete the test row (use the owning tenant's GUC).
+        # Cleanup the workflow row (must use the owning tenant's GUC).
         async with engine_a.begin() as conn:
-            await conn.execute(text(f"SET app.tenant_id = '{tenant}'"))
+            await conn.execute(text(f"SET app.tenant_id = '{tenant_a_id}'"))
             await conn.execute(
                 text("DELETE FROM workflows WHERE id = :id"), {"id": test_id}
             )
@@ -213,7 +262,9 @@ async def test_cross_tenant_select_returns_zero_rows(two_tenant_sessions):
 # ---------------------------------------------------------------------------
 
 
-async def test_cross_tenant_insert_is_blocked_by_with_check(two_tenant_sessions):
+async def test_cross_tenant_insert_is_blocked_by_with_check(
+    two_tenant_sessions, two_real_tenants
+):
     """WITH CHECK clause must reject rows whose tenant_id != GUC.
 
     Proves the second half of the policy (write side). Even if an attacker
@@ -221,25 +272,14 @@ async def test_cross_tenant_insert_is_blocked_by_with_check(two_tenant_sessions)
     inserting a row under a different tenant.
     """
     engine_a, _ = two_tenant_sessions
+    tenant_a_id, tenant_b_id, user_id = two_real_tenants
 
-    tenant_a_id = uuid.uuid4()
-    tenant_b_id = uuid.uuid4()
     test_id = uuid.uuid4()
 
     async with engine_a.begin() as conn:
-        # Need a real tenants/user FK target — find one.
-        tenant_row = await conn.execute(text("SELECT id FROM tenants LIMIT 1"))
-        tenant = tenant_row.scalar_one_or_none()
-        if tenant is None:
-            pytest.skip("No tenants row in test DB")
-
-        user_row = await conn.execute(text("SELECT id FROM users LIMIT 1"))
-        user = user_row.scalar_one_or_none()
-        if user is None:
-            pytest.skip("No users row in test DB")
-
         # Set GUC to tenant_a, but try to insert a row with tenant_id =
-        # tenant_b. WITH CHECK should reject this.
+        # tenant_b (both real Tenant UUIDs, FK satisfied). WITH CHECK
+        # should reject this because row.tenant_id != current_setting.
         await conn.execute(text(f"SET app.tenant_id = '{tenant_a_id}'"))
 
         from sqlalchemy.exc import DBAPIError
@@ -252,7 +292,11 @@ async def test_cross_tenant_insert_is_blocked_by_with_check(two_tenant_sessions)
                     VALUES (:id, :tenant_id, :user_id, 'should-fail-rls', '{}'::jsonb, NOW(), NOW())
                     """
                 ),
-                {"id": test_id, "tenant_id": tenant_b_id, "user_id": user},
+                {
+                    "id": test_id,
+                    "tenant_id": tenant_b_id,
+                    "user_id": user_id,
+                },
             )
 
         # The error message should mention RLS or the policy. PG raises
