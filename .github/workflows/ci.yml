@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.11"
   NODE_VERSION: "20"
 
 jobs:
@@ -17,7 +17,8 @@ jobs:
     env:
       ENVIRONMENT: test
       DEBUG: "false"
-      SECRET_KEY: ci-test-secret-key-change-me-123456
+      SECRET_KEY: ci-test-secret-key-change-me-1234567890ab
+      JWT_SECRET_KEY: ci-test-jwt-secret-change-me-1234567890ab
       DATABASE_URL: sqlite+aiosqlite:///./.pytest_nexus.db
       TEST_DATABASE_URL: sqlite+aiosqlite:///./.pytest_nexus.db
       DEV_API_KEY: test-api-key
@@ -41,12 +42,6 @@ jobs:
       - name: Run tests with coverage
         run: |
           pytest tests/ -v --cov=nexus --cov-report=term-missing --cov-fail-under=75
-
-      - name: E2E smoke (PR)
-        # 之前是 'pytest --collect-only -q 2>&1 | head -3 || true' (noop).
-        # nightly-e2e.yml 存在，现在 PR 跑一个快速 smoke: /health 端点.
-        run: |
-          pytest tests/test_e2e_integration.py -v --tb=short -k "test_01_health_check"
 
       - name: Security scan (SAST)
         run: |
@@ -84,6 +79,110 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  e2e-smoke:
+    name: E2E smoke (health check)
+    runs-on: ubuntu-latest
+    # Light-touch PR check: spin up postgres + redis + the API as service
+    # containers and run the cheapest E2E test (test_01_health_check) to
+    # confirm the API actually boots in CI. The full E2E matrix runs
+    # nightly via nightly-e2e.yml.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus_test_pw
+          POSTGRES_DB: nexus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      api:
+        image: nexus-api:ci
+        build:
+          context: .
+          dockerfile: Dockerfile
+          target: production
+        env:
+          ENVIRONMENT: test
+          DEBUG: "false"
+          DATABASE_URL: postgresql+asyncpg://nexus:nexus_test_pw@postgres:5432/nexus_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-e2e-only-32-chars-min
+          JWT_SECRET_KEY: test-jwt-secret-key-for-e2e-32-chars-min
+          DEV_API_KEY: test_dev_key_for_e2e_only
+          LITELLM_PROXY_URL: ""
+        ports:
+          - 8765:8000
+        options: >-
+          --health-cmd "curl -f http://localhost:8000/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        depends_on:
+          postgres:
+            condition: service_healthy
+          redis:
+            condition: service_healthy
+
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://nexus:nexus_test_pw@localhost:5432/nexus_test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
+      SECRET_KEY: test-secret-key-for-e2e-only-32-chars-min
+      JWT_SECRET_KEY: test-jwt-secret-key-for-e2e-32-chars-min
+      DEV_API_KEY: test_dev_key_for_e2e_only
+      DEBUG: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8765/health > /dev/null 2>&1; then
+              echo "API is up"
+              break
+            fi
+            echo "Waiting for API... ($i/60)"
+            sleep 1
+          done
+          curl -sf http://localhost:8765/health || (echo "API never came up" && exit 1)
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install httpx
+
+      - name: Run E2E smoke
+        # Override pytest.ini addopts to drop the -m "not slow and not integration" filter,
+        # otherwise the @pytest.mark.integration E2E tests would be silently skipped.
+        run: |
+          pytest tests/test_e2e_integration.py -v --tb=short \
+            -k "test_01_health_check" \
+            --override-ini="addopts=-v --tb=short"
 
   docker-build:
     name: Docker build smoke

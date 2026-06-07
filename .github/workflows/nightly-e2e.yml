@@ -28,13 +28,47 @@ jobs:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      api:
+        image: nexus-api:ci
+        build:
+          context: .
+          dockerfile: Dockerfile
+          target: production
+        env:
+          ENVIRONMENT: test
+          DEBUG: "false"
+          DATABASE_URL: postgresql+asyncpg://nexus:nexus_test_pw@postgres:5432/nexus_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-e2e-only-32-chars-min
+          JWT_SECRET_KEY: test-jwt-secret-key-for-e2e-32-chars-min
+          DEV_API_KEY: test_dev_key_for_e2e_only
+          LITELLM_PROXY_URL: ""
+        ports:
+          - 8765:8000
+        options: >-
+          --health-cmd "curl -f http://localhost:8000/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        depends_on:
+          postgres:
+            condition: service_healthy
+          redis:
+            condition: service_healthy
 
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://nexus:nexus_test_pw@localhost:5432/nexus_test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: test
-      SECRET_KEY: ci-test-secret-key-change-me-123456
-      DEV_API_KEY: test-api-key
+      SECRET_KEY: test-secret-key-for-e2e-only-32-chars-min
+      JWT_SECRET_KEY: test-jwt-secret-key-for-e2e-32-chars-min
+      DEV_API_KEY: test_dev_key_for_e2e_only
       DEBUG: "false"
 
     steps:
@@ -42,11 +76,23 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
           cache: pip
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8765/health > /dev/null 2>&1; then
+              echo "API is up"
+              break
+            fi
+            echo "Waiting for API... ($i/60)"
+            sleep 1
+          done
+          curl -sf http://localhost:8765/health || (echo "API never came up" && exit 1)
 
       - name: Install dependencies
         run: |
@@ -59,14 +105,7 @@ jobs:
           alembic upgrade head
 
       - name: Run E2E tests
+        # Override pytest.ini addopts to drop the -m "not slow and not integration" filter,
+        # otherwise the @pytest.mark.integration E2E tests would be silently skipped.
         run: |
-          pytest tests/test_e2e_integration.py -v --tb=short -x
-
-      - name: Upload artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-failure-logs
-          path: |
-            test-results/
-            *.log
+          pytest tests/test_e2e_integration.py -v --tb=short -x --override-ini="addopts=-v --tb=short"
