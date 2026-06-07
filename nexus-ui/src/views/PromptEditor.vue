@@ -96,6 +96,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { api } from '@/utils/api'
+import { promptsApi } from '@/api'
 
 const loading = ref(false)
 const saveLoading = ref(false)
@@ -158,7 +159,7 @@ async function fetchPrompts() {
 async function handleExpand(expanded: boolean, record: any) {
   if (expanded && !record.versions) {
     try {
-      const res = await api.get(`/prompts/${record.id}/versions`)
+      const res = await promptsApi.getVersions(record.id)
       record.versions = res.data
     } catch (e) {
       record.versions = []
@@ -172,7 +173,7 @@ function openEditor(record: any) {
   form.description = record.description || ''
   form.change_notes = ''
   // 获取当前版本内容
-  api.get(`/prompts/${record.id}/content`).then((res: any) => {
+  promptsApi.getContent(record.id).then((res: any) => {
     form.content = res.data.content
     form.variables = res.data.variables || []
   })
