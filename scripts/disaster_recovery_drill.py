@@ -80,19 +80,31 @@ def s3_client():
     )
 
 
-def download_latest_backup(s3) -> str:
-    """下载 S3 桶里最新 .sql.gz 备份到本地."""
+def find_newest_backup_in_s3(s3, prefix: str | None = None) -> dict | None:
+    """查找 S3 桶里最新的 .sql.gz 备份元数据.
+
+    修复 (P0-1.7): 不再 hardcode 24h — RPO 必须从真实备份时间戳算出。
+    返回 dict 包含 Key, LastModified, Size；没有备份时返回 None。
+    """
+    prefix = prefix or BACKUP_PREFIX
     paginator = s3.get_paginator("list_objects_v2")
-    items = []
-    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=BACKUP_PREFIX):
+    items: list[dict] = []
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
         for obj in page.get("Contents", []):
             if obj["Key"].endswith(".sql.gz"):
                 items.append(obj)
     if not items:
+        return None
+    items.sort(key=lambda x: x["LastModified"], reverse=True)
+    return items[0]
+
+
+def download_latest_backup(s3) -> str:
+    """下载 S3 桶里最新 .sql.gz 备份到本地."""
+    latest = find_newest_backup_in_s3(s3)
+    if latest is None:
         raise FileNotFoundError(f"S3 桶 {S3_BUCKET}/{BACKUP_PREFIX} 没找到 .sql.gz 备份")
 
-    items.sort(key=lambda x: x["LastModified"], reverse=True)
-    latest = items[0]
     local = f"/tmp/nexus_dr_{latest['Key'].split('/')[-1]}"
     logger.info("下载最新备份: s3://%s/%s -> %s", S3_BUCKET, latest["Key"], local)
     s3.download_file(Bucket=S3_BUCKET, Key=latest["Key"], Filename=local)
@@ -193,30 +205,69 @@ def cleanup() -> None:
 
 
 def main() -> int:
+    result = run_drill()
+    return 0 if result.get("success") else 1
+
+
+def run_drill() -> dict:
+    """DR 演练主逻辑 — 可被 ARQ cron 调用，返回结构化结果.
+
+    修复 (P0-1.7): RPO 现在从 S3 最新备份的 LastModified 真实测得，
+    不再假设 24h。返回 dict 包含 success / rpo_seconds / rto_seconds /
+    counts / backup_key。
+    """
     logger.info("=" * 70)
     logger.info("NEXUS 灾备演练 (DR Drill) — 从 S3 备份恢复 PostgreSQL")
     logger.info("=" * 70)
 
     t_start = time.time()
+    result: dict = {
+        "success": False,
+        "rpo_seconds": -1,
+        "rto_seconds": -1.0,
+        "counts": {},
+        "backup_key": None,
+    }
     try:
         s3 = s3_client()
+        # 1. 先量 RPO：找最新备份时间戳
+        newest = find_newest_backup_in_s3(s3)
+        if newest is None:
+            logger.warning("RPO 无法测量：S3 桶里没找到 .sql.gz 备份")
+            result["rpo_seconds"] = -1
+        else:
+            # LastModified 是带 tz 的 datetime → epoch 秒
+            last_modified_ts = newest["LastModified"].timestamp()
+            measured_rpo = int(time.time() - last_modified_ts)
+            result["rpo_seconds"] = measured_rpo
+            result["backup_key"] = newest["Key"]
+            logger.info(
+                "RPO (实测): 最新备份 %s 距今 %d 秒 (%.1f 小时)",
+                newest["Key"],
+                measured_rpo,
+                measured_rpo / 3600,
+            )
+
+        # 2. 下载 + 恢复 + 验证
         backup_path = download_latest_backup(s3)
 
         ensure_restore_container()
         restore_backup(backup_path)
         counts = verify_restore()
         t_elapsed = time.time() - t_start
-
-        # 计算 RPO：从最近一次备份到现在的时间
-        # 这里粗略算 (RPO 是从 data last written 到 backup taken 的时间，
-        # 也就是 backup schedule 的周期 — 默认 24h 的话 RPO = 24h)
-        rpo_seconds = 86400  # 假设每天备份
+        result["rto_seconds"] = t_elapsed
+        result["counts"] = counts
+        result["success"] = True
 
         logger.info("=" * 70)
         logger.info("灾备演练结果")
         logger.info("=" * 70)
         logger.info("RTO (恢复时间): %.1f 秒", t_elapsed)
-        logger.info("RPO (数据丢失窗口): ≤ %d 秒 (%d 小时, 假设日备份)", rpo_seconds, rpo_seconds // 3600)
+        rpo = result["rpo_seconds"]
+        if rpo >= 0:
+            logger.info("RPO (实测, 数据丢失窗口): %d 秒 (%.1f 小时)", rpo, rpo / 3600)
+        else:
+            logger.info("RPO (实测): 无可用备份 — 等待首次备份完成")
         logger.info("")
         logger.info("恢复后表行数:")
         for t, n in counts.items():
@@ -224,10 +275,10 @@ def main() -> int:
             logger.info("  %s %-20s %d 行", marker, t, n)
         logger.info("=" * 70)
         logger.info("✓ 灾备演练成功")
-        return 0
+        return result
     except Exception as e:
         logger.exception("灾备演练失败: %s", e)
-        return 1
+        return result
     finally:
         cleanup()
 

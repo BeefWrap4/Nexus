@@ -3,12 +3,15 @@
 修复 (S5 收尾): 之前 backup_postgres.sh 只把 .sql.gz 写到容器本地 ./backups/，
 容器挂了备份就没了。现在推一份到 S3 (MinIO) 异地保留，30 天自动清理。
 
+修复 (P0-1.7): S3_ENDPOINT 不再有 MinIO 默认值 — 必须显式设置，
+强制 operator 指向 off-host S3，避免主集群和备份同生共死。
+
 用法:
     python scripts/backup_to_s3.py
 
-环境变量:
+环境变量 (无 S3_ENDPOINT 默认值, 必须显式指定 off-host 目标):
     DATABASE_URL    (默认: postgresql://nexus:nexus_test_pwd@postgres:5432/nexus)
-    S3_ENDPOINT     (默认: http://nexus-minio:9000)
+    S3_ENDPOINT     (REQUIRED, e.g. https://s3.amazonaws.com — 必须 off-host)
     S3_ACCESS_KEY   (默认: nexus)
     S3_SECRET_KEY   (默认: nexus-secret-key)
     S3_BUCKET       (默认: nexus-backups)
@@ -40,7 +43,15 @@ except ImportError:
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", "postgresql://nexus:nexus_test_pwd@postgres:5432/nexus"
 )
-S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://nexus-minio:9000")
+# 修复 (P0-1.7): S3_ENDPOINT 不再默认指向 nexus-minio (主集群里的 MinIO)。
+# 必须显式设置 off-host 目标 (S3 / OSS / COS / 远端 MinIO cluster)，
+# 否则主集群故障 = 数据 + 备份同时丢失。
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT")
+if not S3_ENDPOINT:
+    raise ValueError(
+        "S3_ENDPOINT 环境变量必须显式设置 (off-host 目标, e.g. https://s3.amazonaws.com)。"
+        "禁止默认指向主集群 MinIO (http://nexus-minio:9000) — 集群挂 = 备份也挂。"
+    )
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "nexus")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "nexus-secret-key")
 S3_BUCKET = os.environ.get("S3_BUCKET", "nexus-backups")

@@ -15,6 +15,11 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from nexus.config import settings
+from nexus.jobs.backup_jobs import (
+    run_dr_drill,
+    run_minio_redis_backup,
+    run_postgres_backup,
+)
 from nexus.jobs.dlq import record_dead_letter_job
 from nexus.jobs.scheduler import scheduled_workflow_trigger
 from nexus.jobs.workflow import execute_workflow_job, resume_workflow_job
@@ -95,7 +100,7 @@ class WorkerSettings:
     # 注册的任务函数
     functions = [execute_workflow_job, resume_workflow_job]
 
-    # Cron 定时任务（每分钟扫描一次定时工作流）
+    # Cron 定时任务（每分钟扫描一次定时工作流 + 备份 + DR drill）
     cron_jobs = [
         cron(
             scheduled_workflow_trigger,
@@ -103,6 +108,33 @@ class WorkerSettings:
                   15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
                   30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
                   45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59},
+            run_at_startup=False,
+        ),
+        # 修复 (P0-1.7): 自动化备份 — 之前全是手动 one-shot
+        # PG:  每 6 小时整点 (00:00, 06:00, 12:00, 18:00 UTC)
+        cron(
+            run_postgres_backup,
+            name="backup_postgres",
+            hour={0, 6, 12, 18},
+            minute=0,
+            run_at_startup=False,
+        ),
+        # MinIO + Redis: 每 6 小时偏移 30 分 (00:30, 06:30, 12:30, 18:30 UTC)
+        # 错开 30 分钟避免与 PG 备份抢 CPU + 带宽
+        cron(
+            run_minio_redis_backup,
+            name="backup_minio_redis",
+            hour={0, 6, 12, 18},
+            minute=30,
+            run_at_startup=False,
+        ),
+        # DR drill: 每周日 3 AM — 验证备份能恢复 + 测真实 RPO
+        cron(
+            run_dr_drill,
+            name="dr_drill",
+            weekday="sun",
+            hour=3,
+            minute=0,
             run_at_startup=False,
         ),
     ]
