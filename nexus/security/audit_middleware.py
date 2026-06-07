@@ -20,7 +20,6 @@ from typing import Optional
 from fastapi import Request
 from starlette.responses import Response
 
-from nexus.config import settings
 # 模块级导入，方便测试 monkeypatch（不要延迟到函数内）
 from nexus.db.database import AsyncSessionLocal
 
@@ -78,9 +77,20 @@ async def audit_log_middleware(request: Request, call_next) -> Response:
     """审计日志中间件主体.
 
     仅 mutating + 已认证 + 非公开 + 非 5xx 的请求会写 audit_logs。
+
+    P0 fix (Task 1.5 second iteration):
+    之前用 ``settings.AUDIT_ENABLED`` (env var, 启动时锁) — 前端
+    Settings.vue 的 auditEnabled switch 改了 DB, 但行为不变, 是
+    theater。现在用 ``is_audit_enabled(tenant_id)``, 走 SystemSetting 表
+    带 30s cache, 让前端开关真正生效 (env var 只是 fallback)。
     """
-    if not settings.AUDIT_ENABLED:
-        return await call_next(request)
+    # Tenant 维度的 audit 开关 (env var 只是 fallback)
+    try:
+        from nexus.services.runtime_config import is_audit_enabled
+    except Exception:  # noqa: BLE001
+        # runtime_config 加载失败 → fail-open (启用 audit), 跟默认一致
+        async def is_audit_enabled(_tenant_id):  # type: ignore[no-redef]
+            return True
 
     # 非 mutating 方法直接 pass-through（GET/HEAD/OPTIONS）
     if request.method not in _MUTATING_METHODS:
@@ -100,6 +110,16 @@ async def audit_log_middleware(request: Request, call_next) -> Response:
     # 未认证请求跳过（RBAC 已 401，user 为空）
     user = getattr(request.state, "user", None)
     if not user:
+        return response
+
+    # Tenant 维度 audit 开关 (在拿到 user 之后查 — 需要 tenant_id)
+    tenant_id_for_audit = user.get("tenant_id")
+    try:
+        audit_on = await is_audit_enabled(tenant_id_for_audit)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("is_audit_enabled_failed tenant=%s err=%s", tenant_id_for_audit, exc)
+        audit_on = True  # fail-open, 默认开
+    if not audit_on:
         return response
 
     # 写 audit_logs（失败软处理 — 任何异常都仅记 warning，不影响响应）

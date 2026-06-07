@@ -113,8 +113,18 @@ const llmSchema = {
 
 const securitySchema = {
   fields: [
-    { name: 'piiEnabled', label: '启用PII过滤', type: 'switch' as const },
-    { name: 'auditEnabled', label: '启用审计日志', type: 'switch' as const },
+    {
+      name: 'piiEnabled',
+      label: '启用PII过滤',
+      type: 'switch' as const,
+      help: 'PII 脱敏总开关。读取 PII_ENABLED 环境变量, 修改本开关后需要重启 API 进程才能生效。',
+    },
+    {
+      name: 'auditEnabled',
+      label: '启用审计日志',
+      type: 'switch' as const,
+      help: 'audit_middleware 启停。写入 SystemSetting 表, 30 秒内对所有 mutating API 生效 (per-tenant)。如未设置, 退回 AUDIT_ENABLED 环境变量。',
+    },
     { name: 'sessionTimeout', label: '会话超时（分钟）', type: 'number' as const, min: 5, max: 1440 },
   ],
 }

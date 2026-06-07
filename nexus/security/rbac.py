@@ -52,8 +52,11 @@ class RBACMiddleware(BaseHTTPMiddleware):
 
         # 构建权限字符串并验证
         permission = f"{resource_type}:{action}"
+        # P0 fix (Task 1.5 second iteration): user 是 dict (从 get_current_user /
+        # auth_context_middleware 来), 不是 User 对象。用 dict.get 而不是属性。
         try:
-            self.permission_engine.check_permission(user.role, permission)
+            user_role = user.get("role") if isinstance(user, dict) else getattr(user, "role", "member")
+            self.permission_engine.check_permission(user_role, permission)
         except PermissionDeniedException as e:
             return JSONResponse(
                 status_code=403,

@@ -25,6 +25,7 @@ from nexus.exceptions import NexusException
 from nexus.jobs.pool import close_arq_pool, init_arq_pool
 from nexus.security.rbac import RBACMiddleware
 from nexus.security.audit_middleware import audit_log_middleware
+from nexus.security.auth_context_middleware import auth_context_middleware
 
 
 def _validate_production_security() -> None:
@@ -438,6 +439,14 @@ app.add_middleware(
 # 通过后的 request.state.user（认证失败的不写审计，避免噪声）。
 # 顺序（自外向内）: CORS → Prometheus → RBAC → AuditLog → endpoint
 app.middleware("http")(audit_log_middleware)
+
+# P0 fix (Task 1.5 second iteration): Auth context middleware.
+# 这条必须**最后**注册 (app.middleware 反向入栈 — 最后注册的最外层, 最早跑),
+# 目的是在 audit/RBAC 之前先把 request.state.user 填好 — 之前 audit_middleware
+# 总看到 None, 一次都没真的写过 audit_logs。同一漏洞也破坏 RBAC 和 get_tenant_db。
+# 顺序（自外向内）: CORS → Prometheus → RBAC → AuditLog → auth_context → endpoint
+# 也就是: 请求进来 → auth_context 先跑 (设 user) → 走到 audit 时 user 已有值。
+app.middleware("http")(auth_context_middleware)
 
 
 # 全局异常处理

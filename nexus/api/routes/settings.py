@@ -168,6 +168,14 @@ async def save_security_settings(
     if not tenant_id:
         raise HTTPException(status_code=400, detail="用户无 tenant_id")
     count = await _save_category(db, tenant_id, user_id, "security", values)
+    # P0 fix (Task 1.5 second iteration): 前端改 auditEnabled / piiEnabled 立即生效,
+    # 不用等 30s cache 自然过期
+    try:
+        from nexus.services.runtime_config import invalidate_cache
+        invalidate_cache()
+    except Exception:  # noqa: BLE001
+        # cache 失效失败不影响主流程 — 下一次 cache TTL 到期也会刷新
+        pass
     return {"ok": True, "saved": count, "category": "security"}
 
 

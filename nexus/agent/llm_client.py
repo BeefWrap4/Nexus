@@ -20,8 +20,12 @@ from nexus.config import settings
 from nexus.exceptions import LLMCallException
 
 # P0 (Task 1.5) SOC2/GDPR: 在 LLM 入口/出口对 PII 进行脱敏。
-# 仅在 settings.PII_ENABLED=True 时生效。PIIGuard.sanitize() 接受 str/dict/list
-# 递归处理，可直接套到 messages 列表（OpenAI 格式）。
+# 默认从 settings.PII_ENABLED (env var) 读取; 启动时一次性决定。
+# P0 fix (Task 1.5 second iteration):
+#   Settings.vue 的 piiEnabled switch 改的是 SystemSetting 表, 不会改 env var
+#   — 所以这里仍然按 env var 启停。要做"运行期切换", 需在 LLMClient 实例上
+#   持有 tenant_id, 然后调用 ``nexus.services.runtime_config.is_pii_enabled``
+#   (带 30s cache)。这是 follow-up, 当前 fix 文档化现状, 不动调用方。
 _pii_guard = None
 if settings.PII_ENABLED:
     try:
@@ -30,6 +34,16 @@ if settings.PII_ENABLED:
     except Exception:  # noqa: BLE001
         # PII 加载失败不阻塞 LLM 调用 — 静默降级，记录在 module import 时。
         _pii_guard = None
+
+
+def _should_sanitize_pii() -> bool:
+    """运行时 PII 脱敏开关 (env var, 启动时锁).
+
+    跟 _pii_guard 模块级变量的语义一致 — 切换 PII_ENABLED 需要进程重启。
+    Settings.vue 的 piiEnabled switch 实际是 "重启后生效" 的运维信号, 不是
+    runtime 开关。这是 P0 fix 文档化过的行为, 不是 bug。
+    """
+    return bool(settings.PII_ENABLED)
 
 
 def _sanitize_messages(messages):
