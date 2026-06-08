@@ -430,7 +430,11 @@ class TestDBFallbackLoad:
 
         state = WorkflowState(run_id="s3-run", workflow_id="wf-s3", version=1)
         state_data_json = json.dumps(state.to_dict())
-        mock_s3.get_object = AsyncMock(return_value=state_data_json)
+        # boto3-style: get_object returns {"Body": BytesReadable}
+        body_bytes = state_data_json.encode("utf-8")
+        mock_s3.get_object = AsyncMock(
+            return_value={"Body": MagicMock(read=lambda: body_bytes)}
+        )
 
         mock_record = MagicMock(spec=CheckpointRecord)
         mock_record.id = "cp_s3"
@@ -592,9 +596,13 @@ class TestS3LoadCheckpointState:
         """通过S3加载检查点状态."""
         state = WorkflowState(run_id="s3-cp-run", workflow_id="wf-s3-cp", version=2)
         state_data_json = json.dumps(state.to_dict())
+        # boto3-style: get_object returns {"Body": BytesReadable}
+        body_bytes = state_data_json.encode("utf-8")
 
         mock_s3 = AsyncMock()
-        mock_s3.get_object = AsyncMock(return_value=state_data_json)
+        mock_s3.get_object = AsyncMock(
+            return_value={"Body": MagicMock(read=lambda: body_bytes)}
+        )
         mgr = CheckpointManager(s3_client=mock_s3)
 
         cp = Checkpoint(
@@ -641,3 +649,89 @@ class TestS3LoadCheckpointState:
 
         loaded = await mgr._load_checkpoint_state(cp)
         assert loaded is state
+
+
+class TestS3PutGetBugFix:
+    """Phase 3 Task 3.1: S3 checkpoint put/get regression tests.
+
+    These tests guard against the P1 bug where ``checkpoint.py:79`` had
+    ``self.s3.put_object(...)`` commented out, silently dropping workflow
+    state >100KB.
+    """
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_persists_large_state_via_s3(self):
+        """A checkpoint with state >100KB should be persisted to S3 via put_object."""
+        s3_client = MagicMock()
+        # boto3-style: put_object returns {} on success
+        s3_client.put_object = AsyncMock(return_value={})
+
+        mgr = CheckpointManager(s3_client=s3_client)
+
+        # Construct a state that serializes to >100KB
+        state = WorkflowState(
+            run_id="s3-persist-run",
+            workflow_id="wf-persist",
+            version=1,
+        )
+        state.node_outputs = {"data": "y" * (CheckpointManager.LARGE_STATE_THRESHOLD + 1000)}
+
+        cp = await mgr.save(run_id="s3-persist-run", state=state, node_id="node-big")
+
+        # state_s3_key set; state is in S3, not silently dropped
+        assert cp.state_s3_key is not None
+        assert cp.state_s3_key.startswith("checkpoints/s3-persist-run/")
+        # S3 put_object was actually called
+        s3_client.put_object.assert_awaited_once()
+        # Verify the call used Bucket+Key+Body (boto3-style)
+        call_kwargs = s3_client.put_object.await_args.kwargs
+        assert "Bucket" in call_kwargs
+        assert "Key" in call_kwargs
+        assert "Body" in call_kwargs
+        assert call_kwargs["Key"] == cp.state_s3_key
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_recovery_from_s3_works(self):
+        """A checkpoint with state_s3_key should be loaded from S3 via get_object."""
+        from nexus.models.workflow import CheckpointRecord
+
+        # boto3-style get_object returns {"Body": BytesReadable}
+        recovered_state = WorkflowState(
+            run_id="recover-run",
+            workflow_id="wf-recover",
+            version=2,
+        )
+        body_bytes = json.dumps(recovered_state.to_dict()).encode("utf-8")
+
+        s3_client = MagicMock()
+        s3_client.get_object = AsyncMock(
+            return_value={"Body": MagicMock(read=lambda: body_bytes)}
+        )
+
+        mgr = CheckpointManager(s3_client=s3_client)
+
+        # Mock a DB record with state_s3_key set and no in-DB state
+        mock_record = MagicMock(spec=CheckpointRecord)
+        mock_record.id = "cp_recover"
+        mock_record.run_id = "recover-run"
+        mock_record.state_data = None
+        mock_record.state_s3_key = "backups/recover-run/cp.json"
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_record
+        mock_session.execute.return_value = mock_result
+
+        with patch("nexus.db.database.get_db_session") as mock_db:
+            mock_db.return_value.__aenter__.return_value = mock_session
+            loaded = await mgr.load(run_id="recover-run")
+
+        # S3 get_object was called with the s3_key
+        s3_client.get_object.assert_awaited_once()
+        call_kwargs = s3_client.get_object.await_args.kwargs
+        assert call_kwargs["Key"] == "backups/recover-run/cp.json"
+        # State was recovered correctly
+        assert loaded is not None
+        assert loaded.run_id == "recover-run"
+        assert loaded.workflow_id == "wf-recover"
+        assert loaded.version == 2

@@ -11,6 +11,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,6 +19,14 @@ from nexus.engine.state_manager import WorkflowState
 from nexus.exceptions import CheckpointNotFoundException
 
 logger = logging.getLogger(__name__)
+
+# S3 bucket used for large checkpoint state. Override via BACKUP_S3_BUCKET env.
+DEFAULT_CHECKPOINT_S3_BUCKET = "nexus-checkpoints"
+
+
+def _checkpoint_bucket() -> str:
+    """Resolve the S3 bucket name for checkpoint blobs."""
+    return os.environ.get("BACKUP_S3_BUCKET", DEFAULT_CHECKPOINT_S3_BUCKET)
 
 
 class Checkpoint:
@@ -76,9 +85,21 @@ class CheckpointManager:
         # 大状态存储到S3
         if len(state_data) > self.LARGE_STATE_THRESHOLD and self.s3:
             key = f"checkpoints/{run_id}/{datetime.now(timezone.utc).isoformat()}.json"
-            # await self.s3.put_object(key, state_data)  # 实际S3调用
-            state_s3_key = key
-            state_data = None  # 不存本地，只存 S3 key
+            try:
+                # boto3-style call: put_object(Bucket=..., Key=..., Body=...)
+                await self.s3.put_object(
+                    Bucket=_checkpoint_bucket(),
+                    Key=key,
+                    Body=state_data.encode("utf-8"),
+                )
+                state_s3_key = key
+                state_data = None  # 不存本地，只存 S3 key
+            except Exception as e:
+                logger.error(
+                    "checkpoint_s3_upload_failed key=%s err=%s", key, e
+                )
+                # Fallback: keep state in DB if S3 upload fails
+                state_s3_key = None
 
         checkpoint = Checkpoint(
             run_id=run_id,
@@ -164,9 +185,23 @@ class CheckpointManager:
 
                 if record:
                     if record.state_s3_key and self.s3:
-                        # 从 S3 加载
-                        state_data = await self.s3.get_object(record.state_s3_key)
-                        return WorkflowState.from_dict(json.loads(state_data))
+                        # 从 S3 加载（boto3-style: get_object returns {"Body": BytesReadable}）
+                        try:
+                            response = await self.s3.get_object(
+                                Bucket=_checkpoint_bucket(),
+                                Key=record.state_s3_key,
+                            )
+                            body = response["Body"].read()
+                            if isinstance(body, bytes):
+                                body = body.decode("utf-8")
+                            return WorkflowState.from_dict(json.loads(body))
+                        except Exception as e:
+                            logger.error(
+                                "checkpoint_s3_load_failed key=%s err=%s",
+                                record.state_s3_key,
+                                e,
+                            )
+                            raise
                     elif record.state_data:
                         return WorkflowState.from_dict(record.state_data)
         except Exception:
@@ -257,9 +292,22 @@ class CheckpointManager:
     async def _load_checkpoint_state(self, checkpoint: Checkpoint) -> WorkflowState:
         """从检查点加载状态."""
         if checkpoint.state_s3_key and self.s3:
-            # 从S3加载
-            # state_data = await self.s3.get_object(checkpoint.state_s3_key)
-            # return WorkflowState.from_dict(json.loads(state_data))
-            pass
+            # 从S3加载（boto3-style: get_object returns {"Body": BytesReadable}）
+            try:
+                response = await self.s3.get_object(
+                    Bucket=_checkpoint_bucket(),
+                    Key=checkpoint.state_s3_key,
+                )
+                body = response["Body"].read()
+                if isinstance(body, bytes):
+                    body = body.decode("utf-8")
+                return WorkflowState.from_dict(json.loads(body))
+            except Exception as e:
+                logger.error(
+                    "checkpoint_s3_load_failed key=%s err=%s",
+                    checkpoint.state_s3_key,
+                    e,
+                )
+                raise
 
         return checkpoint.state
