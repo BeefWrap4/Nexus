@@ -3,7 +3,11 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)](https://fastapi.tiangolo.com)
 [![Vue 3](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org)
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)](.github/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-245%20passed-brightgreen.svg)]()
+[![Coverage](https://img.shields.io/badge/coverage-75%25-yellow.svg)](pytest.ini)
+[![License](https://img.shields.io/badge/license-Enterprise-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-v0.3.0--p1--hygiene-blue.svg)](https://github.com/BeefWrap4/AILearning/releases/tag/v0.3.0-p1-hygiene)
 
 > NEXUS 是一个**通用多Agent协作编排平台**，支持开发者通过 API/SDK 构建复杂的多Agent工作流，同时支持业务人员通过可视化界面拖拽配置业务流程。
 > 
