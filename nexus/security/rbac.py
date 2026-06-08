@@ -35,18 +35,27 @@ class RBACMiddleware(BaseHTTPMiddleware):
         # 获取用户信息
         user = getattr(request.state, "user", None)
         if not user:
-            if request.headers.get("Authorization") or request.headers.get("X-API-Key"):
-                return await call_next(request)
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Authentication required", "code": "UNAUTHORIZED"},
-            )
+            # 修复 (P1, Phase 3.2 deny-by-default):
+            # 旧逻辑: 有 auth header 就放行 (fail-open) 或无 auth header 返 401。
+            # 两种路径都跳过权限检查 — 漏洞。新逻辑: 直接透传到路由,
+            # 让 get_current_user 依赖决定 401 / 通过。这是 fail-CLOSED 的
+            # 唯一安全行为 — 中间件绝不替依赖做"无凭据→放行"的判断。
+            return await call_next(request)
 
         # 解析资源类型
         resource_type = self._parse_resource_type(request.url.path)
         if not resource_type:
-            # 无法识别的路径，放行（由业务路由自行处理）
-            return await call_next(request)
+            # 修复 (P1, Phase 3.2 deny-by-default):
+            # 旧逻辑: 无法识别路径放行 (fail-open) — 任何不在 KNOWN_RESOURCES
+            # 的路径都绕过权限检查。新逻辑: 拒绝 (403)。deny-by-default
+            # 要求: 业务路由必须在 KNOWN_RESOURCES 中注册才可访问。
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": f"Unknown resource path: {request.url.path}",
+                    "code": "FORBIDDEN",
+                },
+            )
 
         # 解析操作
         action = self._parse_action(request.method)
