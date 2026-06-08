@@ -20,6 +20,9 @@ from nexus.models.experiment import PromptExperiment, PromptExperimentVariant
 from nexus.models.llm_trace import LLMCallTrace
 from nexus.models.prompt import PromptTemplate, PromptTemplateVersion
 from nexus.models.billing import BillingSubscription, BillingUsageRecord
+from nexus.models.subscription import Subscription
+from nexus.models.invoice import Invoice
+from nexus.models.quota_event import QuotaEvent
 
 __all__ = [
     "Workflow",
@@ -46,4 +49,7 @@ __all__ = [
     "EvalRun",
     "BillingSubscription",
     "BillingUsageRecord",
+    "Subscription",
+    "Invoice",
+    "QuotaEvent",
 ]

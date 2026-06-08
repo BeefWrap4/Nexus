@@ -3,6 +3,24 @@ import pytest_asyncio
 from nexus.billing.meter import DbUsageMeter
 
 
+def test_subscription_table_exists():
+    """subscriptions table should be registered in Base.metadata."""
+    from nexus.db.database import Base
+    assert "subscriptions" in Base.metadata.tables
+
+
+def test_invoice_table_exists():
+    """invoices table should be registered in Base.metadata."""
+    from nexus.db.database import Base
+    assert "invoices" in Base.metadata.tables
+
+
+def test_quota_event_table_exists():
+    """quota_events table should be registered in Base.metadata."""
+    from nexus.db.database import Base
+    assert "quota_events" in Base.metadata.tables
+
+
 class TestDbUsageMeter:
     @pytest_asyncio.fixture
     async def meter(self, db_session):
