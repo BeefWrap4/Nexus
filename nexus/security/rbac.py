@@ -82,7 +82,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
         KNOWN_RESOURCES = {
             "workflows", "agents", "tools", "crews", "runs", "hitl", "tenants",
             "prompts", "evals", "code-review", "traces", "mcp", "auto",
-            "dashboard",
+            "dashboard", "billing", "settings", "api-keys",
         }
         for part in parts:
             if part in KNOWN_RESOURCES:

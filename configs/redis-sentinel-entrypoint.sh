@@ -37,8 +37,16 @@ else
 fi
 
 sed -e "s/nexus-redis-master/$MASTER_IP/g" \
-    -e "s/__REDIS_PASSWORD__/$AUTH_PASS_VALUE/g" \
     /usr/local/etc/redis/sentinel.conf > /tmp/sentinel-updated.conf
+
+# 修复 (Phase 4.7): Redis 7.4.8 不接受空 auth-pass 指令
+# 当 REDIS_PASSWORD 未设时, 直接删整行 sentinel auth-pass
+if [ -z "${REDIS_PASSWORD:-}" ]; then
+    echo "WARNING: REDIS_PASSWORD not set, removing sentinel auth-pass line"
+    sed -i '/^sentinel auth-pass/d' /tmp/sentinel-updated.conf
+else
+    sed -i "s/__REDIS_PASSWORD__/$REDIS_PASSWORD/g" /tmp/sentinel-updated.conf
+fi
 
 echo "Starting Redis Sentinel..."
 exec redis-sentinel /tmp/sentinel-updated.conf
