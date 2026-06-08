@@ -47,3 +47,4 @@ aiofiles>=23.2.0
 requests>=2.32.5
 chardet>=3.0.2,<6.0.0  # requests import-time compatibility check
 stripe>=7.0.0
+resend>=2.0.0

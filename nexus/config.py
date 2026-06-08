@@ -292,6 +292,12 @@ class Settings(BaseSettings):
     STRIPE_SUCCESS_URL: str = "https://nexus.example.com/billing?session_id={CHECKOUT_SESSION_ID}"
     STRIPE_CANCEL_URL: str = "https://nexus.example.com/pricing"
 
+    # ------------------------------------------------------------------
+    # Resend (Phase 2.8) — billing notification email transport
+    # ------------------------------------------------------------------
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "billing@nexus.example.com"
+
     def validate_jwt_secret_key(self) -> None:
         """验证JWT密钥强度（生产环境必须使用强密钥）."""
         if self.ENVIRONMENT == "production":
