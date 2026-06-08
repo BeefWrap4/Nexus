@@ -262,6 +262,33 @@ docker compose exec api pytest tests/ -v
 
 ---
 
+## 💳 账单 (Phase 2)
+
+NEXUS 使用 Stripe 进行订阅管理。计划:
+
+| 计划 | Tokens/月 | API calls/月 | 价格 |
+|---|---|---|---|
+| Free | 10,000 | 1,000 | $0 |
+| Pro | 1,000,000 | 100,000 | $49/mo |
+| Enterprise | 100,000,000 | 10,000,000 | $499/mo |
+
+### 托管 NEXUS:
+1. 在 https://nexus.example.com/signup 注册 (免费 14 天 Pro 试用)
+2. 在 Settings → Billing 选择计划
+3. 通过 Stripe Customer Portal 管理订阅
+
+### 本地开发:
+- 在 `.env` 设置 `STRIPE_SECRET_KEY=sk_test_...`
+- 从 `stripe listen --forward-to localhost:8765/api/v1/billing/webhook` 获取 `STRIPE_WEBHOOK_SECRET=whsec_...`
+- 使用 Stripe 测试卡号: 4242424242424242
+
+### 配额执行 (Phase 2.3):
+- 免费层: 10K tokens/月, 超出后 API 请求被拒
+- Pro/Enterprise: 更高配额, 用 PostgreSQL `pg_advisory_xact_lock` 原子化
+- 80% 软警告 + 100% 硬限 (每日 9am UTC ARQ cron 检查 + Resend 邮件)
+
+---
+
 ## 增量部署
 
 ```bash
