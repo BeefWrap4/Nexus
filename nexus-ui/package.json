@@ -8,7 +8,9 @@
     "build": "node -e \"import('node:child_process').then(({ spawnSync }) => { const env = { ...process.env, NODE_OPTIONS: '' }; for (const cmd of ['vue-tsc --noEmit', 'vite build']) { const result = spawnSync(cmd, { shell: true, stdio: 'inherit', env }); if (result.status) process.exit(result.status); } })\"",
     "preview": "vite preview",
     "lint": "eslint . --ext .vue,.ts,.tsx",
-    "type-check": "vue-tsc --noEmit"
+    "type-check": "vue-tsc --noEmit",
+    "test": "node -e \"import('node:child_process').then(({ spawnSync }) => { const env = { ...process.env, NODE_OPTIONS: '' }; const result = spawnSync('vitest', ['run'], { shell: true, stdio: 'inherit', env }); process.exit(result.status || 0); })\"",
+    "test:watch": "node -e \"import('node:child_process').then(({ spawnSync }) => { const env = { ...process.env, NODE_OPTIONS: '' }; const result = spawnSync('vitest', [], { shell: true, stdio: 'inherit', env }); process.exit(result.status || 0); })\""
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",
@@ -28,10 +30,13 @@
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
     "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/test-utils": "^2.4.11",
     "eslint": "^8.56.0",
     "eslint-plugin-vue": "^9.19.0",
+    "jsdom": "^25.0.0",
     "typescript": "^6.0.3",
     "vite": "^5.0.0",
+    "vitest": "^2.1.9",
     "vue-tsc": "^3.3.3"
   }
 }
