@@ -143,11 +143,14 @@ async def two_real_tenants(two_tenant_sessions):
             },
         )
         # users also has no RLS; FK to tenants.
+        # Phase 3.7: use is_active (boolean) to match the actual users
+        # table column. The previous status='active' assumed a `status`
+        # text column that doesn't exist.
         await conn.execute(
             text(
                 """
-                INSERT INTO users (id, tenant_id, email, name, status, created_at, updated_at)
-                VALUES (:id, :tid, :email, 'rls_test_user', 'active', NOW(), NOW())
+                INSERT INTO users (id, tenant_id, email, name, is_active, created_at, updated_at)
+                VALUES (:id, :tid, :email, 'rls_test_user', true, NOW(), NOW())
                 """
             ),
             {

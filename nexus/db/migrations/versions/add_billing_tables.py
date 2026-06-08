@@ -8,6 +8,7 @@ Phase 2.2: billing tables for Stripe subscription management.
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision = "add_billing_tables"
 down_revision = "audit_resource_id_nullable"
@@ -19,7 +20,7 @@ def upgrade() -> None:
     op.create_table(
         "subscriptions",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("stripe_customer_id", sa.String(255), nullable=False),
         sa.Column("stripe_subscription_id", sa.String(255), nullable=True),
         sa.Column("plan", sa.String(50), nullable=False),
@@ -38,7 +39,7 @@ def upgrade() -> None:
     op.create_table(
         "invoices",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("subscription_id", sa.String(36), sa.ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True),
         sa.Column("stripe_invoice_id", sa.String(255), nullable=True),
         sa.Column("amount_due_cents", sa.Integer, nullable=False),
@@ -57,7 +58,7 @@ def upgrade() -> None:
     op.create_table(
         "quota_events",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("tenant_id", sa.String(36), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("metric", sa.String(50), nullable=False),
         sa.Column("quantity", sa.Integer, nullable=False),
         sa.Column("resource_id", sa.String(36), nullable=True),

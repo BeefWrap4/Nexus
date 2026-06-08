@@ -31,23 +31,24 @@ depends_on = None
 
 # 修复 (S1-3): 所有 multi-tenant 表（不含 tenants 本身）
 # 与 nexus/models/* 保持同步
+# Phase 3.7: removed crew_agents, node_runs, wf_versions — these are
+# child/junction tables without a tenant_id column. Tenant isolation
+# is inherited from their parent (crews / wf_runs / workflows).
+# billing_subscriptions / billing_usage_records moved to the
+# follow-up migration apply_rls_to_billing_tables.py because those
+# tables are created later by add_billing_tables.
 MULTI_TENANT_TABLES = [
     "agents",
     "api_keys",
     "artifacts",
-    "auditlogs",
-    "billing_subscriptions",
-    "billing_usage_records",
-    "crew_agents",
+    "audit_logs",
     "crews",
     "eval_runs",
     "hitl_tasks",
     "llm_call_traces",
-    "node_runs",
     "prompt_experiments",
     "prompt_templates",
     "tools",
-    "wf_versions",
     "workflows",
 ]
 

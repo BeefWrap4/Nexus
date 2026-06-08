@@ -23,11 +23,11 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         'system_settings',
-        # 修复: tenants.id 和 users.id 在 DB 里是 varchar(36) (不是 UUID),
-        # 用 UUID 类型创建 FK 会失败 "Key columns tenant_id and id are
-        # of incompatible types: uuid and character varying"。改成 String(36)
-        # 跟其它表 (api_keys / wf_runs) 一致
-        sa.Column('tenant_id', sa.String(36),
+        # Phase 3.7: tenants.id / users.id are UUID (created by
+        # initial_migration), not varchar(36). The previous String(36)
+        # here caused "foreign key constraint cannot be implemented"
+        # on a fresh DB. Use postgresql.UUID to match tenants/users.
+        sa.Column('tenant_id', postgresql.UUID(as_uuid=True),
                   sa.ForeignKey('tenants.id', ondelete='CASCADE'),
                   primary_key=True, nullable=False),
         sa.Column('key', sa.String(255), primary_key=True, nullable=False),
@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.Column('category', sa.String(50), nullable=False, server_default='general'),
         sa.Column('updated_at', sa.DateTime(timezone=True),
                   nullable=False, server_default=sa.func.now()),
-        sa.Column('updated_by', sa.String(36),
+        sa.Column('updated_by', postgresql.UUID(as_uuid=True),
                   sa.ForeignKey('users.id', ondelete='SET NULL'),
                   nullable=True),
     )
