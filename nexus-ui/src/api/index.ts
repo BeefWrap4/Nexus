@@ -190,6 +190,9 @@ export const analyticsApi = {
   getWorkflowStats: (workflowId: string) => api.get(`/analytics/workflows/${workflowId}`),
 }
 
+// ==================== Billing API ====================
+export { billingApi } from './billing'
+
 // ==================== Auth API ====================
 export const authApi = {
   login: (data: { email: string; password: string }) =>

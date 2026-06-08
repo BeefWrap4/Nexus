@@ -93,7 +93,7 @@ async function handleSubmit() {
       auth.setUser(data.user)
     }
     message.success('注册成功！欢迎使用 NEXUS')
-    router.push('/dashboard')
+    router.push('/pricing')
   } catch (e: any) {
     if (e?.response?.status === 409) {
       error.value = '该邮箱已被注册'

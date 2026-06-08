@@ -17,6 +17,12 @@ const routes = [
     component: () => import('@/views/Register.vue'),
   },
   {
+    path: '/pricing',
+    name: 'Pricing',
+    component: () => import('@/views/Pricing.vue'),
+    meta: { requiresAuth: false },  // public, can be seen before signup
+  },
+  {
     path: '/',
     component: () => import('@/views/Layout.vue'),
     children: [
@@ -126,6 +132,12 @@ const routes = [
         name: 'Settings',
         component: () => import('@/views/Settings.vue'),
       },
+      {
+        path: 'billing',
+        name: 'Billing',
+        component: () => import('@/views/Billing.vue'),
+        meta: { requiresAuth: true },
+      },
     ],
   },
 ]
@@ -137,7 +149,7 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
-  const publicPaths = ['/login', '/register']
+  const publicPaths = ['/login', '/register', '/pricing']
 
   if (!auth.isAuthenticated && !publicPaths.includes(to.path)) {
     next('/login')

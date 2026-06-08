@@ -19,6 +19,11 @@
             立即注册
           </a-typography-link>
         </a-typography-text>
+        <a-typography-text type="secondary" style="display: block; text-align: center; margin-top: 8px">
+          <a-typography-link @click="$router.push('/pricing')">
+            查看定价
+          </a-typography-link>
+        </a-typography-text>
       </a-form>
     </a-card>
   </div>

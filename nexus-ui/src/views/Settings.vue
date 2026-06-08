@@ -50,6 +50,17 @@
             @submit="saveSecurity"
           />
         </a-tab-pane>
+
+        <a-tab-pane key="billing" tab="账单">
+          <a-space direction="vertical" style="width: 100%">
+            <a-typography-paragraph>
+              管理您的订阅计划、支付方式和发票。
+            </a-typography-paragraph>
+            <a-typography-link @click="$router.push('/billing')">
+              管理账单
+            </a-typography-link>
+          </a-space>
+        </a-tab-pane>
       </a-tabs>
 
       <a-modal v-model:open="keyModalOpen" title="生成API密钥" @ok="createKey">
