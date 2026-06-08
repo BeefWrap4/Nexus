@@ -45,6 +45,27 @@ def test_get_plan_quota_pro_tier():
     assert QuotaEnforcer.get_plan_quota("pro", "tokens") == 1_000_000
 
 
+def test_check_quota_warning_soft_at_80_percent():
+    """Usage at the soft warning threshold (>=80%) returns 'soft'."""
+    from nexus.services.quota_enforcer import check_quota_warning
+
+    assert check_quota_warning(80.0) == "soft"
+
+
+def test_check_quota_warning_hard_at_100_percent():
+    """Usage at/above the hard limit (>=100%) returns 'hard'."""
+    from nexus.services.quota_enforcer import check_quota_warning
+
+    assert check_quota_warning(100.0) == "hard"
+
+
+def test_check_quota_warning_none_below_80():
+    """Usage below the soft threshold returns None (no warning needed)."""
+    from nexus.services.quota_enforcer import check_quota_warning
+
+    assert check_quota_warning(50.0) is None
+
+
 # ---------------------------------------------------------------------------
 # DB-dependent tests (require PostgreSQL)
 # ---------------------------------------------------------------------------

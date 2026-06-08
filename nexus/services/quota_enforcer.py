@@ -26,6 +26,16 @@ from nexus.models.quota_event import QuotaEvent
 logger = logging.getLogger(__name__)
 
 
+# Quota warning thresholds (Phase 2.6)
+# - SOFT_WARNING_PERCENT: send a "you're approaching the cap" email
+# - HARD_LIMIT_PERCENT:   send a "you've been blocked" email
+# These are module-level constants so the daily cron job and the
+# `check_quota_warning` helper use the SAME numbers — never hardcode
+# a threshold in two places.
+SOFT_WARNING_PERCENT = 80
+HARD_LIMIT_PERCENT = 100
+
+
 # Plan quotas (monthly caps).  Defaults to "free" if no Subscription row.
 _PLAN_QUOTAS: dict[str, dict[str, int]] = {
     "free": {
@@ -186,3 +196,40 @@ class QuotaEnforcer:
                 )
                 # commit happens at end of `async with db.begin()`
         return True
+
+    async def get_usage_percent(self, tenant_id: str, metric: str) -> float:
+        """Return usage as a percentage of the cap (0-100+).
+
+        Used by the daily cron job to decide whether to send a warning
+        email. We treat "unknown plan" (cap=0) as 100% so we send a
+        hard-limit notification rather than silently skipping — fail
+        loud, not silent.
+        """
+        plan = await self.get_tenant_plan(tenant_id)
+        cap = self.get_plan_quota(plan, metric)
+        if cap == 0:
+            return 100.0
+        period_start = time.time() - 30 * 24 * 3600
+        async with AsyncSessionLocal() as db:
+            current = await self.get_usage_in_period(
+                db, tenant_id, metric, period_start
+            )
+        return (current / cap) * 100
+
+
+def check_quota_warning(percent: float) -> str | None:
+    """Return the warning level for a given usage percent.
+
+    - "hard" if at/above HARD_LIMIT_PERCENT (cap reached — requests denied)
+    - "soft" if at/above SOFT_WARNING_PERCENT but below hard (warning email)
+    - None  otherwise (no notification needed)
+
+    Pure function — does not touch the DB. Used by the daily ARQ cron
+    and by API responses that want to surface a "you're nearing your
+    cap" banner.
+    """
+    if percent >= HARD_LIMIT_PERCENT:
+        return "hard"
+    if percent >= SOFT_WARNING_PERCENT:
+        return "soft"
+    return None

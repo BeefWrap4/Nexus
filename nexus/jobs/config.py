@@ -21,6 +21,7 @@ from nexus.jobs.backup_jobs import (
     run_postgres_backup,
 )
 from nexus.jobs.dlq import record_dead_letter_job
+from nexus.jobs.email_jobs import check_quota_warnings
 from nexus.jobs.scheduler import scheduled_workflow_trigger
 from nexus.jobs.workflow import execute_workflow_job, resume_workflow_job
 
@@ -134,6 +135,16 @@ class WorkerSettings:
             name="dr_drill",
             weekday="sun",
             hour=3,
+            minute=0,
+            run_at_startup=False,
+        ),
+        # Phase 2.6: daily quota warning scan (9am UTC). Sends a soft
+        # warning email at >=80% usage and a hard "quota exceeded" email
+        # at >=100%. Idempotent — safe to re-run manually for debugging.
+        cron(
+            check_quota_warnings,
+            name="quota_warnings_daily",
+            hour=9,
             minute=0,
             run_at_startup=False,
         ),
