@@ -210,26 +210,29 @@ class LLMService:
             LLMResponse
         """
         # 修复 (S4-3): pre-call 配额检查
-        # 从 context 拿 tenant_id，再用 UsageMeter 查是否超月配额
+        # 从 context 拿 tenant_id，再用 QuotaEnforcer 原子地检查+消费
         # 这是真正的成本控制 — 之前 UsageMeter 存在但永远不调用
         tenant_id = (context or {}).get("tenant_id")
         if tenant_id:
             try:
-                # 修复 (S4-3 持久化): 用 DbUsageMeter 替代内存版，
-                # 这样配额检查跨进程/重启都生效（生产真实场景）
-                from nexus.billing.meter import DbUsageMeter
-                meter = DbUsageMeter()
-                # 检查配额（async — DbUsageMeter 真查 PG）
-                ok, msg = await meter.check_quota(
+                # 修复 (Phase 2.3): 用 QuotaEnforcer 替代 DbUsageMeter，
+                # 解决 SELECT-then-INSERT 竞态 — N 个并发请求可同时越过 cap。
+                # QuotaEnforcer 用 pg_advisory_xact_lock 按 tenant 序列化，
+                # 保证只有一个请求能"在限额内"的剩余容量消费。
+                from nexus.services.quota_enforcer import QuotaEnforcer
+                enforcer = QuotaEnforcer()
+                ok = await enforcer.check_and_consume(
                     tenant_id=tenant_id,
                     metric="tokens",
+                    quantity=1,
+                    source="llm",
                 )
                 if not ok:
                     from nexus.exceptions import QuotaExceededException
                     raise QuotaExceededException(
                         tenant_id=tenant_id,
                         metric="tokens",
-                        limit_used=msg,
+                        limit_used="monthly token cap reached for plan",
                     )
 
                 # 估算本次调用的 token 数（粗略：system + user 字符数 / 4）
