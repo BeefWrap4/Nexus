@@ -26,6 +26,25 @@
 4. **RPO 真实测量** — 当前写死"假设日备份 → RPO=24h"。**生产前必须**：跑 `backup_to_s3.py` 加 `--measure-rpo` 算实际从"最近一次 commit 时间"到"备份完成时间"的差。
 5. **RTO 没优化** — DR drill 实测 2.7s (在小数据集上)。真实生产 100GB+ PG 恢复可能 5-30 分钟，期间 API 不可用。**生产前必须**：warm standby（流复制）+ promote-on-failover。
 
+## 🚨 S3 备份异地要求（强制）
+
+`S3_ENDPOINT` **必须指向独立于 primary MinIO 集群的外部对象存储**。
+
+**禁止的值（会导致 `deploy.sh` 校验失败）：**
+- `nexus-minio`（docker compose 服务名）
+- `localhost:9000`（本机 MinIO）
+- `minio:9000`（通用内网 MinIO 地址）
+
+**允许的值：**
+- AWS S3: `https://s3.amazonaws.com`（或区域 endpoint）
+- GCS: `https://storage.googleapis.com`
+- Azure Blob: `https://<account>.blob.core.windows.net`
+- 独立 MinIO 集群（不同主机/机房）
+
+**原因：** `backup_to_s3.py` 将 PostgreSQL 备份写入 S3；如果 S3_ENDPOINT 指向 primary MinIO，则备份与主数据在同一故障域，单点故障时备份一起丢失。
+
+**验证：** `bash scripts/deploy.sh` 启动时会自动检查 `S3_ENDPOINT`，不合格则报错退出。
+
 ## 标准回放流程
 
 ### 场景 A：PostgreSQL 数据损坏但 MinIO 在

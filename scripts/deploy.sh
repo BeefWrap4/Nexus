@@ -499,6 +499,19 @@ main() {
     # 加载环境
     load_env
 
+    # ---------------------------------------------------------------------------
+    # S3_ENDPOINT 异地备份校验
+    # S3_ENDPOINT 禁止指向 primary MinIO 集群（同机/内嵌 S3 = 单点故障）
+    # ---------------------------------------------------------------------------
+    if [ -n "$S3_ENDPOINT" ]; then
+        if echo "$S3_ENDPOINT" | grep -qE "nexus-minio|localhost:9000|minio:9000"; then
+            echo -e "${RED}ERROR: S3_ENDPOINT must point OFF-HOST in production. Detected: $S3_ENDPOINT${NC}"
+            echo -e "${RED}       Backups stored in the primary MinIO cluster are LOST when the cluster fails.${NC}"
+            echo -e "${RED}       Set S3_ENDPOINT to a real S3/GCS/Azure Blob URL.${NC}"
+            exit 1
+        fi
+    fi
+
     # 检测变更
     detect_changes
 
