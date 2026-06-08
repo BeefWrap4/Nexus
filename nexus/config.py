@@ -281,6 +281,17 @@ class Settings(BaseSettings):
     )
     LOG_LEVEL: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
+    # ------------------------------------------------------------------
+    # Stripe (Phase 2)
+    # ------------------------------------------------------------------
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_ID_FREE: str = ""
+    STRIPE_PRICE_ID_PRO: str = ""
+    STRIPE_PRICE_ID_ENTERPRISE: str = ""
+    STRIPE_SUCCESS_URL: str = "https://nexus.example.com/billing?session_id={CHECKOUT_SESSION_ID}"
+    STRIPE_CANCEL_URL: str = "https://nexus.example.com/pricing"
+
     def validate_jwt_secret_key(self) -> None:
         """验证JWT密钥强度（生产环境必须使用强密钥）."""
         if self.ENVIRONMENT == "production":
