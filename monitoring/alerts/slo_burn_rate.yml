@@ -1,0 +1,24 @@
+groups:
+  - name: slo_burn_rate
+    interval: 30s
+    rules:
+      # 99.9% availability SLO: burn rate alert
+      - alert: APIAvailabilityBurning
+        expr: |
+          (1 - (sum(rate(nexus_api_requests_total{status!~"5.."}[1h])) /
+                sum(rate(nexus_api_requests_total[1h])))) > (1 - 0.999) * 14.4
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "API availability burning 14.4x faster than SLO allows"
+
+      # 1s p99 latency SLO
+      - alert: APILatencyP99Burning
+        expr: |
+          histogram_quantile(0.99, sum(rate(nexus_api_request_duration_seconds_bucket[5m]))) > 1.0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "API p99 latency exceeds 1s SLO"

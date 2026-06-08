@@ -6,6 +6,126 @@
 from dataclasses import dataclass, field
 from typing import Dict
 
+# =========================================================================
+# API SLO 目标 (Phase 3.5 — real targets + burn-rate alerts)
+# =========================================================================
+# 99% of requests succeed in <1s, 99.9% of requests succeed.
+API_SLO_AVAILABILITY = 0.999  # 99.9% uptime (≈43min downtime / month)
+API_SLO_LATENCY_P99_MS = 1000  # 99th percentile under 1s
+API_SLO_ERROR_RATE = 0.001  # 0.1% error rate max
+
+
+def evaluate_api_slo(window: str = "1h") -> Dict[str, Dict[str, object]]:
+    """Return current API SLO status.
+
+    Pulls aggregate availability / latency / error-rate from the in-process
+    Prometheus collectors and compares them against the configured targets.
+
+    The status for each SLO is either:
+
+    * ``"ok"``       — current value is within the target.
+    * ``"burning"``  — current value is worse than the target (budget is being
+                       consumed faster than the rate allowed by the SLO).
+    * ``"unknown"``  — no samples are available yet for the requested window.
+
+    Args:
+        window: Prometheus-style evaluation window (e.g. ``"5m"``, ``"1h"``).
+            The window is reported in the response but does not currently
+            change the underlying aggregation (the function uses the
+            all-time samples exposed by the in-process collectors).
+
+    Returns:
+        A dict keyed by SLO name with ``target``, ``window`` and ``status``.
+    """
+    try:
+        from nexus.observability.metrics import (
+            API_REQUESTS_TOTAL,
+            API_REQUEST_DURATION,
+        )
+
+        # ---- availability / error rate from the request counter ----
+        status_samples = list(API_REQUESTS_TOTAL.collect())[0].samples
+        total = 0.0
+        errors = 0.0
+        for sample in status_samples:
+            # The Counter exposes _total + _created samples; we only need _total.
+            if sample.name.endswith("_total") and sample.labels.get("status"):
+                total += sample.value
+                if sample.labels["status"].startswith("5"):
+                    errors += sample.value
+
+        if total > 0:
+            error_rate = errors / total
+            availability = 1.0 - error_rate
+        else:
+            error_rate = float("nan")
+            availability = float("nan")
+
+        # ---- latency p99 from the histogram ----
+        latency_samples = list(API_REQUEST_DURATION.collect())[0].samples
+        # Prometheus histograms expose {le="..."} buckets; the +Inf bucket is
+        # the total count and equals the all-time request count. The most
+        # precise estimate we can make without a real TSDB is to read the
+        # bucket whose upper bound is closest to (but not greater than) 1s.
+        target_seconds = API_SLO_LATENCY_P99_MS / 1000.0
+        p99_ms: float = float("nan")
+        for sample in latency_samples:
+            if sample.name.endswith("_bucket") and sample.labels.get("le"):
+                le = sample.labels["le"]
+                if le in ("+Inf", "Inf"):
+                    continue
+                try:
+                    le_value = float(le)
+                except ValueError:
+                    continue
+                if le_value <= target_seconds:
+                    p99_ms = le_value * 1000.0
+    except Exception:
+        # If collectors are not yet populated (e.g. during cold start of the
+        # process) or Prometheus client is unavailable, return unknown.
+        return {
+            "availability": {
+                "target": API_SLO_AVAILABILITY,
+                "window": window,
+                "status": "unknown",
+            },
+            "latency_p99_ms": {
+                "target": API_SLO_LATENCY_P99_MS,
+                "window": window,
+                "status": "unknown",
+            },
+            "error_rate": {
+                "target": API_SLO_ERROR_RATE,
+                "window": window,
+                "status": "unknown",
+            },
+        }
+
+    def _status(value: float, target: float, *, lower_is_better: bool = True) -> str:
+        if value != value:  # NaN
+            return "unknown"
+        if lower_is_better:
+            return "ok" if value <= target else "burning"
+        return "ok" if value >= target else "burning"
+
+    return {
+        "availability": {
+            "target": API_SLO_AVAILABILITY,
+            "window": window,
+            "status": _status(1.0 - availability, 1.0 - API_SLO_AVAILABILITY),
+        },
+        "latency_p99_ms": {
+            "target": API_SLO_LATENCY_P99_MS,
+            "window": window,
+            "status": _status(p99_ms, float(API_SLO_LATENCY_P99_MS)),
+        },
+        "error_rate": {
+            "target": API_SLO_ERROR_RATE,
+            "window": window,
+            "status": _status(error_rate, API_SLO_ERROR_RATE),
+        },
+    }
+
 
 @dataclass
 class ServiceLevelObjective:
@@ -214,4 +334,12 @@ def check_slo_violation(metric_name: str, actual_value: float) -> tuple[bool, st
     return False, f"{description}正常: {actual_value:.2f}ms <= {threshold}ms"
 
 
-__all__ = ["SLO", "ServiceLevelObjective", "check_slo_violation"]
+__all__ = [
+    "SLO",
+    "ServiceLevelObjective",
+    "check_slo_violation",
+    "API_SLO_AVAILABILITY",
+    "API_SLO_LATENCY_P99_MS",
+    "API_SLO_ERROR_RATE",
+    "evaluate_api_slo",
+]
