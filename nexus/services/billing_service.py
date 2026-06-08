@@ -74,3 +74,15 @@ class BillingService:
             email=email, name=name, metadata={"tenant_id": tenant_id}
         )
         return customer.id
+
+    def change_plan(self, subscription_id: str, new_price_id: str) -> dict:
+        """Change the plan of an existing subscription.
+
+        Stripe automatically handles proration. We just update the
+        subscription item's price.
+        """
+        sub = stripe.Subscription.retrieve(subscription_id)
+        item_id = sub["items"]["data"][0]["id"]
+        return stripe.SubscriptionItem.modify(
+            item_id, price=new_price_id, proration_behavior="create_prorations"
+        )

@@ -28,6 +28,7 @@ class RBACMiddleware(BaseHTTPMiddleware):
         if (request.url.path in PUBLIC_PATHS or
             request.url.path.startswith("/docs/") or
             request.url.path.startswith("/api/v1/auth/") or  # Auth路由豁免认证
+            request.url.path.startswith("/api/v1/billing/webhook") or  # Stripe webhook uses signature verification
             request.url.path.startswith("/api/v1/webhooks/")):  # 修复 (P1 测试): webhook 用 HMAC 签名自验证, 不走 RBAC
             return await call_next(request)
 
